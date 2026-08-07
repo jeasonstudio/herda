@@ -1360,3 +1360,35 @@ cd macos-client && git add -A && git commit -m "docs: record M2 acceptance resul
 **范围外（有意不做）**：图片粘贴（`ClipboardImage`）、`Mouse Moved`（herdr 仅在鼠标 UI 激活时需要，原型不涉及）、Kitty keyboard report-all、按键重复（`repeat_count` 固定为 1）。
 
 **类型一致性**：`WireEncoder.Key` / `Modifiers` / `MouseKind` / `MouseButton`、`KeyMap.Decision`、`ServerMessage.clipboard`、`TerminalGridView.onPayload` / `cellPosition` / `markedText` 在各 task 间命名一致。Task 11 修改 `ClientProtocolConn.startReadLoop` 签名，其唯一调用方是 `TerminalSession.attach`，同一 task 内一并更新。
+
+---
+
+## M2 验收结果（2026-08-07）
+
+**结论：通过。** 12 个 task 全部完成并逐条提交，代码侧机器验证全绿，GUI 侧人工验收全部通过。
+
+**机器验证**
+
+- 全量测试 `** TEST SUCCEEDED **`，`Test Case ... passed` 计数 116，不少于 M1 的 85。
+- 每个编码/解码/映射 task 均先写失败测试、确认失败、实现、确认通过（TDD）。
+
+**人工验收（在 Debug 原型窗口逐项确认，全部通过）**
+
+- [x] 打字有回显，延迟主观无感
+- [x] 回车执行命令
+- [x] Backspace / 方向键 / Tab 补全工作
+- [x] `ctrl+c` 能中断运行中的命令
+- [x] `ctrl+b` 前缀键进入 herdr prefix 模式
+- [x] 中文输入法能输入并 commit，候选窗口出现在光标附近
+- [x] 预编辑文本在确认前可见（带下划线）
+- [x] 鼠标点击能切换 herdr 焦点；滚轮能滚动 pane 历史
+- [x] cmd+v 能粘贴系统剪贴板内容
+- [x] 窗口 resize 后内容重排且不错位
+
+**实现过程中相对计划的偏离（均已解决，不影响终态）**
+
+1. **Swift 6 并发一致性**：`TerminalGridView` 是 `NSView`（main-actor 隔离），在 `SWIFT_VERSION 6.0` 语言模式下让它符合 `NSTextInputClient`（其要求为 `nonisolated`）会报 “conformance crosses into main actor-isolated code”。计划的 Task 7 未预见此点。正解是把 `@MainActor` 写在**一致性子句内联**处：`extension TerminalGridView: @MainActor NSTextInputClient`。写成 extension 的独立属性会被静默忽略。类本身无需额外标注。
+2. **`startReadLoop` 调用方**：计划称其“唯一调用方是 `TerminalSession.attach`”，但 `ClientProtocolConnTests` 有两处调用。Task 11 改签名后同步补了这两处的 `onClipboard: { _ in }`，否则测试不编译。
+3. **Task 4 编译顺序**：`ClientProtocolConn.startReadLoop` 的 `switch` 是穷尽的，Task 4 新增 `ServerMessage.clipboard` 会立即破坏编译，而接线要到 Task 11。Task 4 内先把 `.clipboard` 并入忽略分支保证可编译可测，Task 11 再拆出接线 `onClipboard`。
+
+**可选后续增强（未做，超出本计划范围）**：Task 11 只要求 server→client 剪贴板路径编译通过，未新增分发测试。可补一个 `ClientProtocolConnTests` 用例，用 `onClipboard` 捕获值验证变体 6 的端到端分发。
