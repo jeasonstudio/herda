@@ -57,6 +57,9 @@ public final class TerminalGridView: NSView {
     /// Set by the session; receives encoded payloads ready for the socket.
     public var onPayload: (@Sendable ([UInt8]) -> Void)?
 
+    /// Provisional input-method text, drawn at the cursor until committed.
+    var markedText: String = ""
+
     public override var acceptsFirstResponder: Bool { true }
 
     public override func viewDidMoveToWindow() {
@@ -172,4 +175,82 @@ public final class TerminalGridView: NSView {
         static let underlined: UInt16 = 1 << 3
         static let reversed: UInt16 = 1 << 6
     }
+}
+
+// NSView is already main-actor isolated; isolating the conformance to match
+// lets these methods touch view state. The input method only calls them on the
+// main thread. `@MainActor` sits on the conformance clause — as an attribute on
+// the extension it is silently ignored.
+extension TerminalGridView: @MainActor NSTextInputClient {
+    /// Composition finished: send the committed text.
+    public func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        switch string {
+        case let value as String: text = value
+        case let value as NSAttributedString: text = value.string
+        default: return
+        }
+        markedText = ""
+        needsDisplay = true
+        guard !text.isEmpty else { return }
+        onPayload?(WireEncoder.textCommit(text))
+    }
+
+    /// Composition in progress: hold the provisional text for drawing.
+    public func setMarkedText(
+        _ string: Any,
+        selectedRange: NSRange,
+        replacementRange: NSRange
+    ) {
+        switch string {
+        case let value as String: markedText = value
+        case let value as NSAttributedString: markedText = value.string
+        default: markedText = ""
+        }
+        needsDisplay = true
+    }
+
+    public func unmarkText() {
+        markedText = ""
+        needsDisplay = true
+    }
+
+    public func hasMarkedText() -> Bool { !markedText.isEmpty }
+
+    public func markedRange() -> NSRange {
+        markedText.isEmpty ? NSRange(location: NSNotFound, length: 0)
+                           : NSRange(location: 0, length: markedText.utf16.count)
+    }
+
+    public func selectedRange() -> NSRange {
+        NSRange(location: markedText.utf16.count, length: 0)
+    }
+
+    public func attributedSubstring(
+        forProposedRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSAttributedString? { nil }
+
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+
+    /// Positions the candidate window at the cursor. Without this it appears in
+    /// a corner of the screen, which makes CJK input unusable in practice.
+    public func firstRect(
+        forCharacterRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSRect {
+        let cursor = currentFrame?.cursor
+        let column = CGFloat(cursor?.column ?? 0)
+        let row = CGFloat(cursor?.row ?? 0)
+        let local = CGRect(
+            x: column * cellSize.width,
+            y: row * cellSize.height,
+            width: cellSize.width * CGFloat(max(1, markedText.count)),
+            height: cellSize.height
+        )
+        let inWindow = convert(local, to: nil)
+        return window?.convertToScreen(inWindow) ?? inWindow
+    }
+
+    public func characterIndex(for point: NSPoint) -> Int { NSNotFound }
 }
