@@ -3234,6 +3234,29 @@ cd macos-client && git add -A && git commit -m "feat: wire up startup sequence a
 
 ---
 
+## M1 验收结果（2026-08-07 实测）
+
+| 验收项 | 结果 |
+|---|---|
+| 启动序列端到端跑通 | ✅ 定位 binary → 写 config → spawn server → 等 socket → 握手 → 收帧渲染 |
+| 隔离生效 | ✅ 内嵌 server 用独立 socket/config/state；开发者真实 session 前后均为 21 pane，未受影响 |
+| 清除继承的 `HERDR_*` | ✅ 必要且生效——app 本身就是从真实 herdr 会话里启动的 |
+| grid 数据保真 | ✅ 合成帧与 `herdr pane read` 一致；三种颜色编码、光标、宽字符均正确 |
+| **中文/emoji 不错位** | ✅ **人眼确认**。`CharWidth` 与 ghostty-vt 判断一致——M1 最大技术风险排除 |
+| 滚动流畅度 | ✅ 人眼确认。`seq 1 400000` 快速滚动无卡顿——**逐 cell 绘制够用，不做 run 合并优化** |
+| 单元测试 | ✅ 83 个全过 |
+| 无 sidebar 残留 | ❌ **未达成**，见下 |
+
+### 未解决：隐藏 herdr 自己的 sidebar
+
+app 发出的字节正确（`prototype.log`：`sent sidebar toggle: 07 01 00 10 14 06 00 01 00 00`，与一次成功过的 Rust 探针逐字节相同），但 toggle 通常无效。终端区左侧因此被占去约 25 列。
+
+已实测排除：字节编码错误、config 未加载、键名/modifier 语法、「Terminal 模式不拦截直接快捷键」、「握手后立即发被丢弃」、「session 为空时无效」、匹配需要 vt bytes。**尚未定位的是某个状态相关条件**——同一串字节曾成功一次。
+
+诊断过程中发现探针的观察方法本身一度有缺陷：只看连接后第一帧，而该帧可能早于状态变更，且探针自身发 toggle 会翻转全局状态。改为读满 3 秒取最后一帧后才确认现状。
+
+决定：接受 sidebar 存在，不阻塞 M1 结论（cell grid 能正确取到并渲染已获证实）。待 M2 有输入层后用手动按键复现，比继续盲猜高效。
+
 ## 自检结果
 
 **Spec 覆盖对照**
