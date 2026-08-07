@@ -126,4 +126,29 @@ final class WireEncoderTests: XCTestCase {
             WireEncoder.functionKey(20, modifiers: [.control, .option])
         )
     }
+
+    func testTextCommitIsLengthPrefixed() {
+        XCTAssertEqual(
+            WireEncoder.textCommit("a"),
+            [0x07, 0x01, 0x01, 0x01, 0x61]
+        )
+        // "更新" is six UTF-8 bytes; TextCommit(String) IS length-prefixed.
+        XCTAssertEqual(
+            WireEncoder.textCommit("更新"),
+            [0x07, 0x01, 0x01, 0x06, 0xE6, 0x9B, 0xB4, 0xE6, 0x96, 0xB0]
+        )
+    }
+
+    func testPasteEncodesText() {
+        XCTAssertEqual(WireEncoder.paste("hi"), [0x07, 0x01, 0x03, 0x02, 0x68, 0x69])
+    }
+
+    func testFocusEventsHaveNoPayload() {
+        XCTAssertEqual(WireEncoder.focus(gained: true), [0x07, 0x01, 0x04])
+        XCTAssertEqual(WireEncoder.focus(gained: false), [0x07, 0x01, 0x05])
+    }
+
+    func testEmptyTextCommitStillEncodes() {
+        XCTAssertEqual(WireEncoder.textCommit(""), [0x07, 0x01, 0x01, 0x00])
+    }
 }

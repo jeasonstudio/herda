@@ -71,6 +71,11 @@ public enum WireEncoder {
 
     private enum InputEvent: UInt64 {
         case key = 0
+        case textCommit = 1
+        case mouse = 2
+        case paste = 3
+        case focusGained = 4
+        case focusLost = 5
     }
 
     private enum KeyKind: UInt64 {
@@ -79,6 +84,32 @@ public enum WireEncoder {
 
     private enum KeySource: UInt64 {
         case synthesized = 0
+    }
+
+    private static func envelope(_ event: UInt64) -> [UInt8] {
+        var out = Varint.encode(Variant.inputEvents.rawValue)
+        out += Varint.encode(UInt64(1))    // events.count
+        out += Varint.encode(event)
+        return out
+    }
+
+    private static func string(_ text: String) -> [UInt8] {
+        let bytes = Array(text.utf8)
+        return Varint.encode(UInt64(bytes.count)) + bytes
+    }
+
+    /// Committed text from the input method. Unlike `Char`, `String` is
+    /// length-prefixed.
+    public static func textCommit(_ text: String) -> [UInt8] {
+        envelope(InputEvent.textCommit.rawValue) + string(text)
+    }
+
+    public static func paste(_ text: String) -> [UInt8] {
+        envelope(InputEvent.paste.rawValue) + string(text)
+    }
+
+    public static func focus(gained: Bool) -> [UInt8] {
+        envelope(gained ? InputEvent.focusGained.rawValue : InputEvent.focusLost.rawValue)
     }
 
     /// A key this client can send. Mirrors `ClientKeyCode`; only the variants
@@ -141,9 +172,7 @@ public enum WireEncoder {
     }
 
     public static func key(_ key: Key, modifiers: Modifiers) -> [UInt8] {
-        var out = Varint.encode(Variant.inputEvents.rawValue)
-        out += Varint.encode(UInt64(1))              // events.count
-        out += Varint.encode(InputEvent.key.rawValue)
+        var out = envelope(InputEvent.key.rawValue)
         out += Varint.encode(key.variant)
         out += key.payload
         out.append(modifiers.rawValue)               // u8, raw byte
