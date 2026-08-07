@@ -143,7 +143,7 @@ toggle_sidebar = "ctrl+alt+f20"
 macos-client/
   project.yml                      # xcodegen 输入，.xcodeproj 由它生成
   Sources/
-    HerdrKit/                      # framework：全部逻辑
+    HerdrKit/                      # 静态库：全部逻辑
       Runtime/     HerdrRuntime · RuntimePaths
       Protocol/    Varint · ByteReader · Framing · WireTypes
                    WireEncoder · WireDecoder · ClientProtocolConn · ApiClient
@@ -157,7 +157,9 @@ macos-client/
     design.md · plan-m1.md
 ```
 
-**逻辑必须放在 framework 而非 app target。** 若单元测试以 app 为 test host，运行测试会启动 app，连带执行启动序列并 spawn 一个真实的 herdr server——这会让测试产生副作用且变慢。framework 结构使 `HerdrKitTests` 无需 host app。
+**逻辑必须放在独立库而非 app target。** 若单元测试以 app 为 test host，运行测试会启动 app，连带执行启动序列并 spawn 一个真实的 herdr server——这会让测试产生副作用且变慢。独立库使 `HerdrKitTests` 无需 host app。
+
+该库须是**静态库**而非 framework：framework 被嵌入 xctest bundle 时 codesign 会以 `bundle format unrecognized, invalid, or unsuitable` 失败（实测）。另外 xcodegen 不会为 test bundle 生成 Info.plist，需显式设 `GENERATE_INFOPLIST_FILE: YES`，否则签名步骤直接报错。
 
 | 组件 | 职责 | 依赖 | 明确不管 |
 |---|---|---|---|

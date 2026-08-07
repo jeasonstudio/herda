@@ -4,7 +4,7 @@
 
 **Goal:** 做出一个 macOS app，它拉起自己内嵌的 herdr server，连上 client socket，把 herdr 的终端区 cell grid 用 Core Text 画在原生窗口里。
 
-**Architecture:** App 是 herdr server 的父进程，用 `XDG_CONFIG_HOME` / `XDG_STATE_HOME` / `HERDR_SESSION` 三个环境变量与开发机上已有的 herdr session 完全隔离。逻辑全部放在 `HerdrKit` framework（app target 只有 UI 入口），使单元测试无需 host app、不会误启动真实 server。协议走纯 Swift 手写的 bincode 2 `standard` 编解码 + `[u32 LE length][payload]` framing。
+**Architecture:** App 是 herdr server 的父进程，用 `HERDR_SOCKET_PATH` / `XDG_CONFIG_HOME` / `XDG_STATE_HOME` 与开发机上已有的 herdr session 完全隔离（并清除继承的 `HERDR_*`）。逻辑全部放在 `HerdrKit` 静态库（app target 只有 UI 入口），使单元测试无需 host app、不会误启动真实 server。协议走纯 Swift 手写的 bincode 2 `standard` 编解码 + `[u32 LE length][payload]` framing。
 
 **Tech Stack:** Swift 6 / AppKit + SwiftUI / Core Text / XCTest / xcodegen / POSIX Unix domain socket
 
@@ -100,13 +100,13 @@ settings:
 
 targets:
   HerdrKit:
-    type: framework
+    # Static library rather than a framework: embedding a framework inside an
+    # xctest bundle fails code signing ("bundle format unrecognized"). Static
+    # linking keeps the logic testable without a host app.
+    type: library.static
     platform: macOS
     sources:
       - path: Sources/HerdrKit
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.herdr.HerdrKit
 
   HerdrPrototype:
     type: application
@@ -115,7 +115,6 @@ targets:
       - path: Sources/HerdrPrototype
     dependencies:
       - target: HerdrKit
-        embed: true
     info:
       path: Sources/HerdrPrototype/Info.plist
       properties:
@@ -134,6 +133,11 @@ targets:
       - path: Tests/HerdrKitTests
     dependencies:
       - target: HerdrKit
+    settings:
+      base:
+        # xcodegen does not synthesise one for test bundles, and code signing
+        # refuses to run without it.
+        GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
   HerdrPrototype:
@@ -150,6 +154,8 @@ schemes:
 ```
 
 注意：`HerdrKitTests` 只依赖 `HerdrKit`，**不依赖 app target**。这样它是 logic test bundle，不会以 app 为 test host，跑测试不会启动 app、不会 spawn server。
+
+`HerdrKit` 必须是 `library.static` 而非 `framework`：framework 被嵌入 xctest bundle 时 codesign 会以 `bundle format unrecognized, invalid, or unsuitable` 失败（实测）。静态链接同时满足「测试不需要 host app」与「能签名」。
 
 `ENABLE_HARDENED_RUNTIME: NO` 与不配置 entitlements 是必需的——原型要 spawn 子进程并连 Unix socket，沙盒会阻止。
 
@@ -1088,9 +1094,10 @@ final class WireDecoderTests: XCTestCase {
         out.append(1)                              // visible
         out.append(2)                              // shape (steady block)
 
+        let uri = "https://example/"
         out += Varint.encode(UInt64(1))            // hyperlinks.count
-        out += Varint.encode(UInt64(11))
-        out += Array("https://x/".utf8) + [0x21]   // "https://x/!" == 11 bytes
+        out += Varint.encode(UInt64(uri.utf8.count))
+        out += Array(uri.utf8)
 
         out += Varint.encode(UInt64(2))            // graphics.count
         out += [0xDE, 0xAD]
@@ -1113,7 +1120,7 @@ final class WireDecoderTests: XCTestCase {
         XCTAssertEqual(frame.cells[1].symbol, " ")
         XCTAssertEqual(frame.cells[1].hyperlink, 0)
         XCTAssertEqual(frame.cursor, GridCursor(column: 1, row: 0, isVisible: true, shape: 2))
-        XCTAssertEqual(frame.hyperlinks, ["https://x/!"])
+        XCTAssertEqual(frame.hyperlinks, ["https://example/"])
         XCTAssertEqual(frame.graphics, [0xDE, 0xAD])
     }
 
@@ -1956,11 +1963,12 @@ final class UnixSocketTests: XCTestCase {
         let b = UnixSocket(adopting: fds[1])
         defer { a.close(); b.close() }
 
-        let reader = Task.detached { try b.readExactly(4) }
+        // Three writes accumulate in the socket buffer; one readExactly must
+        // reassemble them. No concurrency needed, so no flakiness.
         try a.write([9])
         try a.write([8, 7])
         try a.write([6])
-        XCTAssertEqual(try awaitValue(of: reader), [9, 8, 7, 6])
+        XCTAssertEqual(try b.readExactly(4), [9, 8, 7, 6])
     }
 
     func testReadingAfterPeerCloseThrowsClosed() throws {
@@ -1995,21 +2003,6 @@ final class UnixSocketTests: XCTestCase {
                 return XCTFail("expected pathTooLong, got \(error)")
             }
         }
-    }
-
-    private func awaitValue<T>(of task: Task<T, Error>) throws -> T {
-        let box = ResultBox<T>()
-        let done = expectation(description: "task finished")
-        Task {
-            box.result = await task.result
-            done.fulfill()
-        }
-        wait(for: [done], timeout: 5)
-        return try XCTUnwrap(box.result).get()
-    }
-
-    private final class ResultBox<T>: @unchecked Sendable {
-        var result: Result<T, Error>?
     }
 }
 ```
@@ -2252,7 +2245,11 @@ Expected: 编译失败，`cannot find 'HerdrRuntime' in scope`
 import Foundation
 
 /// Owns the embedded herdr server process.
-public final class HerdrRuntime {
+///
+/// `@unchecked Sendable`: the startup sequence runs on a detached task and
+/// captures this object. Mutable state is only the captured stderr, guarded by
+/// a lock; `Process` itself is safe to query across threads.
+public final class HerdrRuntime: @unchecked Sendable {
     public enum Failure: Error {
         case binaryNotFound(searched: [String])
         case socketTimeout(missing: [String], seconds: TimeInterval)
@@ -2923,9 +2920,9 @@ public final class TerminalGridView: NSView {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
 
-        let origin = CGPoint(x: rect.minX, y: rect.minY + (cellSize.height + regularFont.descender) - regularFont.ascender)
+        // The view is flipped, so this point is the glyph's top-left corner.
         (cell.symbol as NSString).draw(
-            at: CGPoint(x: origin.x, y: rect.minY),
+            at: CGPoint(x: rect.minX, y: rect.minY),
             withAttributes: attributes
         )
     }
@@ -3095,21 +3092,8 @@ public final class TerminalSession: ObservableObject {
     }
 
     public func shutdown() {
-        connection?.send(WireEncoder.detach()).map { _ in } ?? ()
-        connection?.stop()
-        runtime?.stop()
-        connection = nil
-        runtime = nil
-        state = .idle
-    }
-}
-```
-
-注意 `shutdown()` 里 `send` 是 `throws` 且返回 `Void`，上面那行写法不合法。改成：
-
-```swift
-    public func shutdown() {
         if let connection {
+            // Best effort: the server also handles an abrupt socket close.
             try? connection.send(WireEncoder.detach())
             connection.stop()
         }
@@ -3118,6 +3102,7 @@ public final class TerminalSession: ObservableObject {
         runtime = nil
         state = .idle
     }
+}
 ```
 
 - [ ] **Step 2: 接入视图**

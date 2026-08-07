@@ -1,0 +1,11 @@
+# xcodegen output — regenerate with `xcodegen generate`
+*.xcodeproj
+
+# build artifacts
+build/
+DerivedData/
+.DS_Store
+
+# xcode user state
+xcuserdata/
+*.xcworkspace/xcuserdata/

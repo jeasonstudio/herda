@@ -1,0 +1,68 @@
+name: macos-client
+
+options:
+  bundleIdPrefix: dev.herdr
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: "NO"
+    ENABLE_HARDENED_RUNTIME: "NO"
+
+targets:
+  HerdrKit:
+    # Static library rather than a framework: embedding a framework inside an
+    # xctest bundle fails code signing ("bundle format unrecognized"). Static
+    # linking keeps the logic testable without a host app.
+    type: library.static
+    platform: macOS
+    sources:
+      - path: Sources/HerdrKit
+
+  HerdrPrototype:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/HerdrPrototype
+    dependencies:
+      - target: HerdrKit
+    info:
+      path: Sources/HerdrPrototype/Info.plist
+      properties:
+        CFBundleName: HerdrPrototype
+        CFBundleDisplayName: Herdr Prototype
+        NSHighResolutionCapable: true
+        NSPrincipalClass: NSApplication
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.herdr.macos-client-prototype
+
+  HerdrKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/HerdrKitTests
+    dependencies:
+      - target: HerdrKit
+    settings:
+      base:
+        # xcodegen does not synthesise one for test bundles, and code signing
+        # refuses to run without it.
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  HerdrPrototype:
+    build:
+      targets:
+        HerdrPrototype: all
+        HerdrKitTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - HerdrKitTests
