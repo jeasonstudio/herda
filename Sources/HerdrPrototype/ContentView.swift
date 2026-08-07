@@ -6,6 +6,24 @@ struct ContentView: View {
     @StateObject private var session = TerminalSession()
 
     var body: some View {
+        HStack(spacing: 0) {
+            SidebarView(
+                model: session.sidebar,
+                onSelectWorkspace: { session.focusWorkspace($0) },
+                onSelectPane: { session.focusPane($0) }
+            )
+            .frame(width: 220)
+            .background(.thinMaterial)
+
+            Divider()
+
+            terminalArea
+        }
+        .onDisappear { session.shutdown() }
+    }
+
+    /// The M1/M2 terminal surface, unchanged apart from being nested.
+    private var terminalArea: some View {
         GeometryReader { geometry in
             ZStack {
                 GridViewRepresentable(view: session.view)
@@ -41,7 +59,6 @@ struct ContentView: View {
                 }
             }
         }
-        .onDisappear { session.shutdown() }
     }
 
     private var statusText: String {

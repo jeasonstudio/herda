@@ -19,10 +19,14 @@ public final class TerminalSession: ObservableObject {
 
     public let view: TerminalGridView
 
+    public let sidebar = SidebarModel()
+
     private let paths: RuntimePaths
     private var runtime: HerdrRuntime?
     private var connection: ClientProtocolConn?
     private var needsSidebarToggle = true
+    private var api: ApiClient?
+    private var eventPump: ApiClient.EventPump?
 
     public init(
         paths: RuntimePaths = .defaultLocation(),
@@ -96,6 +100,60 @@ public final class TerminalSession: ObservableObject {
                 }
             }
         )
+        startApiChannel()
+    }
+
+    /// Starts the API channel. Deliberately independent of the render channel:
+    /// a stalled sidebar must not affect the terminal, and vice versa.
+    private func startApiChannel() {
+        let api = ApiClient(socketPath: paths.apiSocket.path)
+        self.api = api
+
+        Task.detached { [weak self] in
+            do {
+                let snapshot = try api.snapshot()
+                await MainActor.run { self?.sidebar.apply(snapshot) }
+                let pump = try api.subscribe()
+                await MainActor.run { self?.eventPump = pump }
+                pump.start(
+                    onEvent: { name, data in
+                        // `[String: Any]` is not Sendable, but the pump reads
+                        // events serially on one thread and each `data` is a
+                        // fresh, unshared dictionary — safe to hand to the main
+                        // actor. The box carries it across the boundary.
+                        let box = EventBox(name: name, data: data)
+                        Task { @MainActor in self?.sidebar.handle(event: box.name, data: box.data) }
+                    },
+                    onFailure: { error in
+                        Task { @MainActor in self?.log("event pump stopped: \(error)") }
+                    }
+                )
+            } catch {
+                await MainActor.run { self?.log("api channel failed: \(error)") }
+            }
+        }
+    }
+
+    public func focusWorkspace(_ workspaceId: String) {
+        guard let api else { return }
+        Task.detached { [weak self] in
+            do {
+                try api.focusWorkspace(workspaceId)
+            } catch {
+                await MainActor.run { self?.log("focus workspace failed: \(error)") }
+            }
+        }
+    }
+
+    public func focusPane(_ paneId: String) {
+        guard let api else { return }
+        Task.detached { [weak self] in
+            do {
+                try api.focusPane(paneId)
+            } catch {
+                await MainActor.run { self?.log("focus pane failed: \(error)") }
+            }
+        }
     }
 
     /// Hides herdr's own sidebar, since the native UI replaces it.
@@ -190,9 +248,20 @@ public final class TerminalSession: ObservableObject {
             try? connection.send(WireEncoder.detach())
             connection.stop()
         }
+        eventPump?.stop()
+        eventPump = nil
+        api = nil
         runtime?.stop()
         connection = nil
         runtime = nil
         state = .idle
+    }
+
+    /// Carries a non-Sendable event payload across the actor boundary. Safe
+    /// because the event pump produces each payload on one thread and never
+    /// shares it; see the use site in `startApiChannel`.
+    private struct EventBox: @unchecked Sendable {
+        let name: String
+        let data: [String: Any]
     }
 }
