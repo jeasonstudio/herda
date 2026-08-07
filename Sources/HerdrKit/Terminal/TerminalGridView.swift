@@ -54,6 +54,36 @@ public final class TerminalGridView: NSView {
         needsDisplay = true
     }
 
+    /// Set by the session; receives encoded payloads ready for the socket.
+    public var onPayload: (@Sendable ([UInt8]) -> Void)?
+
+    public override var acceptsFirstResponder: Bool { true }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // SwiftUI does not focus an NSViewRepresentable automatically.
+        window?.makeFirstResponder(self)
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        switch KeyMap.decide(
+            keyCode: event.keyCode,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            flags: event.modifierFlags
+        ) {
+        case .send(let key, let modifiers):
+            onPayload?(WireEncoder.key(key, modifiers: modifiers))
+        case .inputMethod:
+            // Produces insertText or setMarkedText (Task 7).
+            inputContext?.handleEvent(event)
+        case .ignore:
+            break
+        }
+    }
+
+    /// Swallow the system beep for keys the pane consumes.
+    public override func doCommand(by selector: Selector) {}
+
     /// Row 0 must be at the top, matching the row-major cell order.
     public override var isFlipped: Bool { true }
 
