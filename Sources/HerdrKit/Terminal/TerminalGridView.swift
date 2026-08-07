@@ -109,6 +109,7 @@ public final class TerminalGridView: NSView {
         }
 
         drawCursor(grid)
+        drawMarkedText(grid)
     }
 
     private func draw(_ cell: GridCell, column: Int, row: Int, advance: Int) {
@@ -165,6 +166,36 @@ public final class TerminalGridView: NSView {
         )
         defaultForeground.withAlphaComponent(0.6).setFill()
         rect.fill()
+    }
+
+    /// Draws in-progress input-method text at the cursor, underlined, so the
+    /// user can see the composition before committing it.
+    private func drawMarkedText(_ grid: GridFrame) {
+        guard !markedText.isEmpty else { return }
+        let column = CGFloat(grid.cursor?.column ?? 0)
+        let row = CGFloat(grid.cursor?.row ?? 0)
+
+        let columns = markedText.reduce(into: 0) { total, character in
+            total += CharWidth.displayWidth(of: String(character))
+        }
+        let rect = CGRect(
+            x: column * cellSize.width,
+            y: row * cellSize.height,
+            width: cellSize.width * CGFloat(max(1, columns)),
+            height: cellSize.height
+        )
+
+        defaultBackground.setFill()
+        rect.fill()
+
+        (markedText as NSString).draw(
+            at: CGPoint(x: rect.minX, y: rect.minY),
+            withAttributes: [
+                .font: regularFont,
+                .foregroundColor: defaultForeground,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+            ]
+        )
     }
 
     /// ratatui `Modifier` bit positions.
