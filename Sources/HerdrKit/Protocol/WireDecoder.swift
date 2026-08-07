@@ -77,4 +77,43 @@ public enum WireDecoder {
         }
         return value
     }
+
+    private enum Variant: UInt64 {
+        case welcome = 0
+        case frame = 1
+        case shutdown = 4
+    }
+
+    /// Decodes one framed payload.
+    ///
+    /// Variants the prototype handles are decoded strictly: the payload must be
+    /// consumed exactly, otherwise the codec and the server disagree and we
+    /// fail loudly. Variants it does not handle return `.ignored` without
+    /// touching their payload — framing already told us where the message ends.
+    public static func serverMessage(from payload: [UInt8]) throws -> ServerMessage {
+        var reader = ByteReader(payload)
+        let variant = try reader.varint()
+
+        switch Variant(rawValue: variant) {
+        case .welcome:
+            let version = UInt32(truncatingIfNeeded: try reader.varint())
+            let encoding = UInt32(truncatingIfNeeded: try reader.varint())
+            let error = try reader.optionTag() ? try reader.string() : nil
+            try reader.requireFullyConsumed()
+            return .welcome(version: version, encoding: encoding, error: error)
+
+        case .frame:
+            let frame = try gridFrame(from: &reader)
+            try reader.requireFullyConsumed()
+            return .frame(frame)
+
+        case .shutdown:
+            let reason = try reader.optionTag() ? try reader.string() : nil
+            try reader.requireFullyConsumed()
+            return .shutdown(reason: reason)
+
+        case nil:
+            return .ignored(variant: variant)
+        }
+    }
 }

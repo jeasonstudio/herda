@@ -113,4 +113,56 @@ final class WireDecoderTests: XCTestCase {
         XCTAssertNil(frame.cursor)
         XCTAssertTrue(frame.cells.isEmpty)
     }
+
+    func testDecodesWelcomeWithoutError() throws {
+        let payload: [UInt8] = [0x00, 0x13, 0x00, 0x00]
+        let message = try WireDecoder.serverMessage(from: payload)
+        XCTAssertEqual(message, .welcome(version: 19, encoding: 0, error: nil))
+    }
+
+    func testDecodesWelcomeWithError() throws {
+        var payload: [UInt8] = [0x00, 0x13, 0x00, 0x01]
+        payload += Varint.encode(UInt64(2))
+        payload += Array("no".utf8)
+        let message = try WireDecoder.serverMessage(from: payload)
+        XCTAssertEqual(message, .welcome(version: 19, encoding: 0, error: "no"))
+    }
+
+    func testDecodesShutdownReason() throws {
+        var payload: [UInt8] = [0x04, 0x01]
+        payload += Varint.encode(UInt64(4))
+        payload += Array("bye!".utf8)
+        XCTAssertEqual(try WireDecoder.serverMessage(from: payload), .shutdown(reason: "bye!"))
+    }
+
+    func testDecodesFrameVariant() throws {
+        let payload = [UInt8]([0x01]) + twoByOneFramePayload
+        guard case .frame(let frame) = try WireDecoder.serverMessage(from: payload) else {
+            return XCTFail("expected a frame")
+        }
+        XCTAssertEqual(frame.width, 2)
+    }
+
+    func testIgnoresUnhandledVariantsWithoutInspectingPayload() throws {
+        // MouseCapture(9) carries a bool the prototype does not use.
+        XCTAssertEqual(try WireDecoder.serverMessage(from: [0x09, 0x01]), .ignored(variant: 9))
+        // ReloadSoundConfig(8) has no payload.
+        XCTAssertEqual(try WireDecoder.serverMessage(from: [0x08]), .ignored(variant: 8))
+        // Graphics(3) carries arbitrary bytes.
+        XCTAssertEqual(
+            try WireDecoder.serverMessage(from: [0x03, 0x02, 0xAA, 0xBB]),
+            .ignored(variant: 3)
+        )
+    }
+
+    func testRejectsTrailingBytesInHandledVariant() {
+        let payload: [UInt8] = [0x00, 0x13, 0x00, 0x00, 0xFF]
+        XCTAssertThrowsError(try WireDecoder.serverMessage(from: payload)) { error in
+            XCTAssertEqual(error as? ByteReader.Failure, .trailingBytes(consumed: 4, total: 5))
+        }
+    }
+
+    func testRejectsTruncatedHandledVariant() {
+        XCTAssertThrowsError(try WireDecoder.serverMessage(from: [0x00, 0x13]))
+    }
 }
