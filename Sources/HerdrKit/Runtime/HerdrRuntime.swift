@@ -55,8 +55,8 @@ public final class HerdrRuntime: @unchecked Sendable {
 
     public var isRunning: Bool { process.isRunning }
 
-    public func start() throws {
-        try paths.writeConfig()
+    public func start(themeName: String) throws {
+        try paths.writeConfig(themeName: themeName)
 
         process.executableURL = binary
         process.arguments = ["server"]

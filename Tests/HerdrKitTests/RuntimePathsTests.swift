@@ -22,7 +22,7 @@ final class RuntimePathsTests: XCTestCase {
     func testConfigContentsHidesSidebarFromTheFirstFrame() {
         // Starting collapsed (not a runtime toggle) is what keeps herdr's own
         // sidebar hidden even after workspace operations re-expand it server-side.
-        let toml = paths.configContents
+        let toml = paths.configContents(themeName: "catppuccin")
         XCTAssertTrue(toml.contains("sidebar_start_collapsed = true"))
         XCTAssertTrue(toml.contains("sidebar_collapsed_mode = \"hidden\""))
         XCTAssertTrue(toml.contains("[ui]"))
@@ -31,16 +31,35 @@ final class RuntimePathsTests: XCTestCase {
     func testConfigContentsDisablesOnboarding() {
         // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
         // overlay, and it takes over input handling before anything else.
-        XCTAssertTrue(paths.configContents.contains("onboarding = false"))
+        XCTAssertTrue(paths.configContents(themeName: "catppuccin").contains("onboarding = false"))
     }
 
     func testOnboardingKeyPrecedesAnyTomlSection() throws {
         // A top-level TOML key placed after a [section] would be parsed as part
         // of that section and silently ignored.
-        let toml = paths.configContents
+        let toml = paths.configContents(themeName: "catppuccin")
         let onboardingIndex = try XCTUnwrap(toml.range(of: "onboarding = false")).lowerBound
         let firstSectionIndex = try XCTUnwrap(toml.range(of: "[ui]")).lowerBound
         XCTAssertLessThan(onboardingIndex, firstSectionIndex)
+    }
+
+    func testConfigContentsIncludesThemeName() {
+        let toml = paths.configContents(themeName: "dracula")
+        XCTAssertTrue(toml.contains("[theme]"))
+        XCTAssertTrue(toml.contains("name = \"dracula\""))
+    }
+
+    func testExistingThemeNameReturnsNilWhenFileAbsent() {
+        XCTAssertNil(RuntimePaths(root: URL(fileURLWithPath: "/tmp/herdr-proto-absent", isDirectory: true)).existingThemeName())
+    }
+
+    func testExistingThemeNameReadsPersistedValue() throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("herdr-proto-theme-\(UUID().uuidString)", isDirectory: true)
+        let subject = RuntimePaths(root: temporaryRoot)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        try subject.writeConfig(themeName: "nord")
+        XCTAssertEqual(subject.existingThemeName(), "nord")
     }
 
     func testEnvironmentSetsIsolationVariables() {

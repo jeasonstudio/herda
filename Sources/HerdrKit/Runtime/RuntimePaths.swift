@@ -41,8 +41,10 @@ public struct RuntimePaths: Sendable {
     public var clientSocket: URL { root.appendingPathComponent("herdr-client.sock") }
 
     /// Hides herdr's own sidebar from the first frame, since the native UI
-    /// replaces it.
-    public var configContents: String {
+    /// replaces it, and sets `[theme] name` so herdr's own chrome — hidden in
+    /// this prototype, but consulted if it ever becomes visible again — matches
+    /// whatever the client's own UI is themed as.
+    public func configContents(themeName: String) -> String {
         // `onboarding = false` must come first: it is a top-level TOML key, and
         // it is essential rather than cosmetic. With onboarding active the
         // server sits in `Mode::Onboarding`, which covers the terminal with a
@@ -60,6 +62,9 @@ public struct RuntimePaths: Sendable {
         [ui]
         sidebar_start_collapsed = true
         sidebar_collapsed_mode = "hidden"
+
+        [theme]
+        name = "\(themeName)"
         """
     }
 
@@ -72,9 +77,20 @@ public struct RuntimePaths: Sendable {
         }
     }
 
-    public func writeConfig() throws {
+    public func writeConfig(themeName: String) throws {
         try createDirectories()
-        try configContents.write(to: configFile, atomically: true, encoding: .utf8)
+        try configContents(themeName: themeName).write(to: configFile, atomically: true, encoding: .utf8)
+    }
+
+    /// Reads the `[theme] name` from a config.toml written by a previous
+    /// launch, if one exists — the "combine both" half of theme sync: this
+    /// lets a fresh launch continue with whatever theme was last selected,
+    /// before `writeConfig` overwrites the file.
+    public func existingThemeName() -> String? {
+        guard let data = try? Data(contentsOf: configFile),
+              let text = String(data: data, encoding: .utf8)
+        else { return nil }
+        return Theme.name(fromConfig: text)
     }
 
     /// Builds the child environment. Inherited `HERDR_*` variables are removed
