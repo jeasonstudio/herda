@@ -70,7 +70,8 @@ public final class ClientProtocolConn: @unchecked Sendable {
                     case .shutdown(let reason):
                         onShutdown(reason)
                         return
-                    case .welcome, .ignored:
+                    case .clipboard, .welcome, .ignored:
+                        // Clipboard is wired to the pasteboard in Task 11.
                         continue
                     }
                 } catch {

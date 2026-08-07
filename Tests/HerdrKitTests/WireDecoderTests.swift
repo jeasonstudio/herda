@@ -165,4 +165,24 @@ final class WireDecoderTests: XCTestCase {
     func testRejectsTruncatedHandledVariant() {
         XCTAssertThrowsError(try WireDecoder.serverMessage(from: [0x00, 0x13]))
     }
+
+    func testDecodesClipboardPayload() throws {
+        // Server sends base64; decoding to text is the caller's job.
+        var payload: [UInt8] = [0x06]
+        let base64 = "aGk="                      // "hi"
+        payload += Varint.encode(UInt64(base64.utf8.count))
+        payload += Array(base64.utf8)
+        XCTAssertEqual(
+            try WireDecoder.serverMessage(from: payload),
+            .clipboard(base64: "aGk=")
+        )
+    }
+
+    func testRejectsTrailingBytesAfterClipboard() {
+        var payload: [UInt8] = [0x06]
+        payload += Varint.encode(UInt64(1))
+        payload += Array("x".utf8)
+        payload.append(0xFF)
+        XCTAssertThrowsError(try WireDecoder.serverMessage(from: payload))
+    }
 }

@@ -87,5 +87,6 @@ public enum ServerMessage: Equatable, Sendable {
     case welcome(version: UInt32, encoding: UInt32, error: String?)
     case frame(GridFrame)
     case shutdown(reason: String?)
+    case clipboard(base64: String)
     case ignored(variant: UInt64)
 }

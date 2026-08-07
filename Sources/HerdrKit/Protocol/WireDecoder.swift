@@ -82,6 +82,7 @@ public enum WireDecoder {
         case welcome = 0
         case frame = 1
         case shutdown = 4
+        case clipboard = 6
     }
 
     /// Decodes one framed payload.
@@ -111,6 +112,11 @@ public enum WireDecoder {
             let reason = try reader.optionTag() ? try reader.string() : nil
             try reader.requireFullyConsumed()
             return .shutdown(reason: reason)
+
+        case .clipboard:
+            let base64 = try reader.string()
+            try reader.requireFullyConsumed()
+            return .clipboard(base64: base64)
 
         case nil:
             return .ignored(variant: variant)
