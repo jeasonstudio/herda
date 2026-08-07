@@ -117,4 +117,93 @@ public final class ApiClient: @unchecked Sendable {
             id: "focus-pane"
         )
     }
+
+    static func subscribeLine(to eventTypes: [String]) throws -> String {
+        try requestLine(
+            id: "events",
+            method: "events.subscribe",
+            params: ["subscriptions": eventTypes.map { ["type": $0] }]
+        )
+    }
+
+    /// Events the sidebar needs. Subscription names use dots; the pushed
+    /// `event` field uses underscores.
+    public static let sidebarEventTypes = [
+        "workspace.created",
+        "workspace.updated",
+        "workspace.renamed",
+        "workspace.closed",
+        "workspace.focused",
+        "pane.created",
+        "pane.updated",
+        "pane.closed",
+        "pane.focused",
+        "pane.exited",
+        "pane.agent_detected",
+    ]
+
+    /// Opens a subscription and returns the pump driving it. The connection must
+    /// stay open: the server stops pushing once the client half-closes.
+    public func subscribe(to eventTypes: [String] = sidebarEventTypes) throws -> EventPump {
+        let socket = try UnixSocket(connectingTo: socketPath)
+        try socket.write(Array(try ApiClient.subscribeLine(to: eventTypes).utf8))
+        return EventPump(socket: socket)
+    }
+
+    /// Reads an event subscription on a background thread.
+    public final class EventPump: @unchecked Sendable {
+        private let socket: UnixSocket
+        private let reader: LineReader
+        private var thread: Thread?
+        private let stopped = Flag()
+
+        init(socket: UnixSocket) {
+            self.socket = socket
+            self.reader = LineReader(socket: socket)
+        }
+
+        public func start(
+            onEvent: @escaping @Sendable (String, [String: Any]) -> Void,
+            onFailure: @escaping @Sendable (Error) -> Void
+        ) {
+            let thread = Thread { [weak self] in
+                guard let self else { return }
+                while !self.stopped.isSet {
+                    do {
+                        let line = try self.reader.readLine()
+                        guard case .event(let name) = try ApiTypes.classify(line: line) else {
+                            continue    // the subscription acknowledgement
+                        }
+                        let data = line.data(using: .utf8) ?? Data()
+                        let object = (try? JSONSerialization.jsonObject(with: data))
+                            as? [String: Any]
+                        let payload = object?["data"] as? [String: Any] ?? [:]
+                        onEvent(name, payload)
+                    } catch {
+                        if !self.stopped.isSet { onFailure(error) }
+                        return
+                    }
+                }
+            }
+            thread.name = "herdr.api.events"
+            self.thread = thread
+            thread.start()
+        }
+
+        public func stop() {
+            stopped.set()
+            socket.close()
+            thread = nil
+        }
+
+        private final class Flag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = false
+            var isSet: Bool {
+                lock.lock(); defer { lock.unlock() }
+                return value
+            }
+            func set() { lock.lock(); value = true; lock.unlock() }
+        }
+    }
 }

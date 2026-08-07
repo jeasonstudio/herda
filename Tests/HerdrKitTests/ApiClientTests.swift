@@ -63,4 +63,55 @@ final class ApiClientTests: XCTestCase {
         let reader = LineReader(socket: client)
         XCTAssertThrowsError(try reader.readLine())
     }
+
+    func testSubscriptionRequestListsSubscriptionsWithDottedNames() throws {
+        let line = try ApiClient.subscribeLine(to: ["workspace.created", "pane.updated"])
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(object["method"] as? String, "events.subscribe")
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        let subscriptions = try XCTUnwrap(params["subscriptions"] as? [[String: Any]])
+        XCTAssertEqual(subscriptions.count, 2)
+        XCTAssertEqual(subscriptions[0]["type"] as? String, "workspace.created")
+    }
+
+    func testSubscriptionDeliversEventsAndSkipsTheAcknowledgement() throws {
+        let (client, server) = makePair()
+        defer { client.close(); server.close() }
+
+        // Acknowledgement first, then two pushed events.
+        try server.write(Array("{\"id\":\"e\",\"result\":{\"type\":\"subscription_started\"}}\n".utf8))
+        try server.write(Array("{\"event\":\"pane_created\",\"data\":{\"type\":\"pane_created\"}}\n".utf8))
+        try server.write(Array("{\"event\":\"workspace_focused\",\"data\":{\"type\":\"workspace_focused\"}}\n".utf8))
+
+        let received = expectation(description: "two events")
+        received.expectedFulfillmentCount = 2
+        let box = NameBox()
+
+        let pump = ApiClient.EventPump(socket: client)
+        pump.start(
+            onEvent: { name, _ in
+                box.append(name)
+                received.fulfill()
+            },
+            onFailure: { _ in }
+        )
+        wait(for: [received], timeout: 5)
+        pump.stop()
+
+        XCTAssertEqual(box.names, ["pane_created", "workspace_focused"])
+    }
+
+    private final class NameBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String] = []
+        var names: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return storage
+        }
+        func append(_ name: String) {
+            lock.lock(); storage.append(name); lock.unlock()
+        }
+    }
 }
