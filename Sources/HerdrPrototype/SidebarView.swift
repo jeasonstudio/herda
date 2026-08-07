@@ -47,7 +47,7 @@ struct SidebarView: View {
         HStack(spacing: 6) {
             StatusDot(status: pane.agentStatus)
             VStack(alignment: .leading, spacing: 1) {
-                Text(pane.agent ?? "agent")
+                Text(model.agentName(forPane: pane.paneId) ?? "agent")
                     .font(.system(.caption, design: .monospaced))
                 Text(pane.terminalTitleStripped ?? pane.cwd)
                     .font(.system(size: 10))

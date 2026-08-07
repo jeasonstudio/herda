@@ -116,6 +116,69 @@ final class SidebarModelTests: XCTestCase {
         XCTAssertTrue(model.panes(inWorkspace: "w2").isEmpty)
     }
 
+    func testPaneAgentDetectedEventUsesFlatFieldsAndListsTheAgent() throws {
+        // The real event is `{agent, pane_id, workspace_id}` with no `pane`
+        // object; the pane already exists from the snapshot without an agent.
+        let model = SidebarModel()
+        model.apply(try snapshot(
+            workspaces: [("w1", 1)],
+            panes: [("w1:p1", "w1", nil, .unknown)]
+        ))
+        XCTAssertTrue(model.agents(inWorkspace: "w1").isEmpty)
+
+        model.handle(event: "pane_agent_detected", data: [
+            "agent": "claude", "pane_id": "w1:p1", "workspace_id": "w1",
+        ])
+        XCTAssertEqual(model.agents(inWorkspace: "w1").map(\.paneId), ["w1:p1"])
+        XCTAssertEqual(model.agentName(forPane: "w1:p1"), "claude")
+    }
+
+    func testDetectedAgentSurvivesAPaneUpdateWithoutAnAgentField() throws {
+        // A later `pane_updated` whose pane snapshot omits `agent` must not
+        // erase a detection — the pane keeps showing as an agent row.
+        let model = SidebarModel()
+        model.apply(try snapshot(
+            workspaces: [("w1", 1)],
+            panes: [("w1:p1", "w1", nil, .unknown)]
+        ))
+        model.handle(event: "pane_agent_detected", data: [
+            "agent": "claude", "pane_id": "w1:p1", "workspace_id": "w1",
+        ])
+        model.handle(event: "pane_updated", data: [
+            "pane": [
+                "pane_id": "w1:p1", "terminal_id": "t", "workspace_id": "w1",
+                "tab_id": "w1:t1", "focused": false, "cwd": "/", "foreground_cwd": "/",
+                "agent_status": "working", "revision": 2,
+            ],
+        ])
+        XCTAssertEqual(model.agents(inWorkspace: "w1").map(\.paneId), ["w1:p1"])
+        XCTAssertEqual(model.agentName(forPane: "w1:p1"), "claude")
+    }
+
+    func testPaneFocusedEventUsesFlatPaneId() throws {
+        // The real event is `{pane_id, workspace_id}` with no `pane` object.
+        let model = SidebarModel()
+        model.apply(try snapshot(
+            workspaces: [("w1", 1)],
+            panes: [("w1:p1", "w1", "claude", .idle)]
+        ))
+        model.handle(event: "pane_focused", data: [
+            "pane_id": "w1:p1", "workspace_id": "w1",
+        ])
+        XCTAssertEqual(model.focusedPaneId, "w1:p1")
+    }
+
+    func testClosingAPaneClearsItsDetectedAgent() throws {
+        let model = SidebarModel()
+        model.apply(try snapshot(workspaces: [("w1", 1)], panes: [("w1:p1", "w1", nil, .unknown)]))
+        model.handle(event: "pane_agent_detected", data: [
+            "agent": "claude", "pane_id": "w1:p1", "workspace_id": "w1",
+        ])
+        model.handle(event: "pane_closed", data: ["pane_id": "w1:p1"])
+        XCTAssertNil(model.agentName(forPane: "w1:p1"))
+        XCTAssertTrue(model.agents(inWorkspace: "w1").isEmpty)
+    }
+
     func testMalformedEventPayloadIsIgnored() throws {
         let model = SidebarModel()
         model.apply(try snapshot(workspaces: [("w1", 1)]))
