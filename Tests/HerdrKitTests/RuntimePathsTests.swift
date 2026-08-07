@@ -27,6 +27,22 @@ final class RuntimePathsTests: XCTestCase {
         XCTAssertTrue(toml.contains("[keys]"))
     }
 
+    func testConfigContentsDisablesOnboarding() {
+        // Not cosmetic: Mode::Onboarding swallows every key before keybinding
+        // matching, which blocks the sidebar toggle and leaves a first-run
+        // overlay the prototype has no way to dismiss (no input layer in M1).
+        XCTAssertTrue(paths.configContents.contains("onboarding = false"))
+    }
+
+    func testOnboardingKeyPrecedesAnyTomlSection() throws {
+        // A top-level TOML key placed after a [section] would be parsed as part
+        // of that section and silently ignored.
+        let toml = paths.configContents
+        let onboardingIndex = try XCTUnwrap(toml.range(of: "onboarding = false")).lowerBound
+        let firstSectionIndex = try XCTUnwrap(toml.range(of: "[ui]")).lowerBound
+        XCTAssertLessThan(onboardingIndex, firstSectionIndex)
+    }
+
     func testEnvironmentSetsIsolationVariables() {
         let env = paths.environment(basedOn: [:])
         XCTAssertEqual(env["HERDR_SOCKET_PATH"], "/tmp/herdr-proto-test/herdr.sock")

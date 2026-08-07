@@ -3244,18 +3244,21 @@ cd macos-client && git add -A && git commit -m "feat: wire up startup sequence a
 | grid 数据保真 | ✅ 合成帧与 `herdr pane read` 一致；三种颜色编码、光标、宽字符均正确 |
 | **中文/emoji 不错位** | ✅ **人眼确认**。`CharWidth` 与 ghostty-vt 判断一致——M1 最大技术风险排除 |
 | 滚动流畅度 | ✅ 人眼确认。`seq 1 400000` 快速滚动无卡顿——**逐 cell 绘制够用，不做 run 合并优化** |
-| 单元测试 | ✅ 83 个全过 |
-| 无 sidebar 残留 | ❌ **未达成**，见下 |
+| 单元测试 | ✅ 85 个全过 |
+| 无 sidebar 残留 | ✅ 修复后达成，见下 |
 
-### 未解决：隐藏 herdr 自己的 sidebar
+### 已解决：sidebar toggle 无效（根因 = onboarding 模式）
 
-app 发出的字节正确（`prototype.log`：`sent sidebar toggle: 07 01 00 10 14 06 00 01 00 00`，与一次成功过的 Rust 探针逐字节相同），但 toggle 通常无效。终端区左侧因此被占去约 25 列。
+现象：app 发出的字节正确（`prototype.log` 记录，与 Rust 探针逐字节相同），但 toggle 无效，终端区左侧被 sidebar 占去约 25 列。
 
-已实测排除：字节编码错误、config 未加载、键名/modifier 语法、「Terminal 模式不拦截直接快捷键」、「握手后立即发被丢弃」、「session 为空时无效」、匹配需要 vt bytes。**尚未定位的是某个状态相关条件**——同一串字节曾成功一次。
+**根因**：首次运行时 server 停在 `Mode::Onboarding`。`input/mod.rs:99` 把每个按键交给 `handle_onboarding_key`，**在 keybinding 匹配之前就吞掉**，因此 toggle 从未触发。引导浮层同时遮住终端，而 M1 没有输入层，用户也无法关掉它。
 
-诊断过程中发现探针的观察方法本身一度有缺陷：只看连接后第一帧，而该帧可能早于状态变更，且探针自身发 toggle 会翻转全局状态。改为读满 3 秒取最后一帧后才确认现状。
+**修复**：config 顶层加 `onboarding = false`（依据 `config/model.rs:1741`），且必须置于所有 `[section]` 之前——放在 section 之后会被当作该 section 的键而静默失效。已有测试守护这个顺序。
 
-决定：接受 sidebar 存在，不阻塞 M1 结论（cell grid 能正确取到并渲染已获证实）。待 M2 有输入层后用手动按键复现，比继续盲猜高效。
+### 诊断过程中的两个教训
+
+1. **探针的观察方法一度有缺陷**：原本只看连接后第一帧，而该帧可能早于状态变更，且探针自身发 toggle 会翻转全局状态。改为读满 3 秒取最后一帧才可靠。
+2. **无法直接观察 UI 时应尽早请人描述所见**。我从数据侧排除了七种可能（字节编码、config 加载、键名语法、Terminal 模式拦截、发送时机、session 为空、匹配需要 vt bytes）都没找到根因；用户一句「有引导弹窗挡着」立刻定位。看不见窗口是这次绕远路的根本原因。
 
 ## 自检结果
 

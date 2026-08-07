@@ -287,5 +287,5 @@ M1 + M2 + M3 合起来构成"最小日常可用闭环"。M1 不过关则后两�
 | 手写 bincode 解码器静默错位 | 结构定义抄错会产生难查的花屏 | 严格字节数校验 + golden fixture 来自真实字节 |
 | 协议版本 bump | herdr 演进会改 `PROTOCOL_VERSION` | 自带 runtime 使两者一起版本化；启动时严格校验并明确报错 |
 | 方案 A 原生感不足 | 分隔线与 modal 仍为字符绘制 | 已知并接受；验证成立后可走向 per-pane 原生 view |
-| **sidebar toggle hack 不可靠（M1 实测确认，未解决）** | app 发出的字节正确（`prototype.log` 记录，与一次成功过的 Rust 探针逐字节相同），但 toggle 通常无效。代价是终端区左侧被 herdr 自己的 sidebar 占去约 25 列 | 已排除：字节编码、config 未加载（`sidebar_collapsed_mode = "hidden"` 生效过）、键名与 modifier 语法、Terminal 模式不拦截直接快捷键（`terminal.rs:77` 会拦截且 headless 共用该函数）、握手后立即发被丢弃（改为首帧后发仍无效）、session 为空、匹配需要 vt bytes。**尚未定位的是某个状态相关条件。** 待 M2 有输入层后手动按键复现，比继续盲猜高效 |
+| ~~sidebar toggle 无效~~ **（M1 已解决）** | 根因是 `Mode::Onboarding`：首次运行时 server 停在引导模式，`input/mod.rs:99` 会把每个按键交给 `handle_onboarding_key`，**在 keybinding 匹配之前就吞掉**，所以 toggle 从不触发；同时引导浮层遮住终端，而 M1 没有输入层、用户也无法关掉它 | config 顶层加 `onboarding = false`（依据 `config/model.rs:1741`）。必须置于所有 `[section]` 之前，否则会被当成该 section 的键而静默失效——已有测试守护此顺序 |
 | `Char` 的 bincode 表示未验证 | M1 已通过改用 `ctrl+alt+f20` 规避；M2 处理字母键时会遇到 | M2 开始前先用一小段 Rust 确认 `char` 编码；文本输入优先走 `TextCommit` |
