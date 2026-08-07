@@ -73,4 +73,57 @@ final class WireEncoderTests: XCTestCase {
         let payload = WireEncoder.functionKey(1, modifiers: [])
         XCTAssertEqual(payload, [0x07, 0x01, 0x00, 0x10, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00])
     }
+
+    func testCharKeyMatchesMeasuredBytes() {
+        XCTAssertEqual(
+            WireEncoder.key(.character("c"), modifiers: .control),
+            [0x07, 0x01, 0x00, 0x0F, 0x63, 0x02, 0x00, 0x01, 0x00, 0x00]
+        )
+    }
+
+    func testCharKeyWithoutModifiers() {
+        XCTAssertEqual(
+            WireEncoder.key(.character("a"), modifiers: []),
+            [0x07, 0x01, 0x00, 0x0F, 0x61, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+    }
+
+    func testCharIsEncodedAsRawUTF8WithoutLengthPrefix() {
+        // Unlike String, char carries no length prefix. "更" is three bytes.
+        XCTAssertEqual(
+            WireEncoder.key(.character("更"), modifiers: []),
+            [0x07, 0x01, 0x00, 0x0F, 0xE6, 0x9B, 0xB4, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+    }
+
+    func testSpecialKeysUseTheirVariantIndices() {
+        XCTAssertEqual(
+            WireEncoder.key(.enter, modifiers: []),
+            [0x07, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            WireEncoder.key(.escape, modifiers: []),
+            [0x07, 0x01, 0x00, 0x0E, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            WireEncoder.key(.backspace, modifiers: []),
+            [0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            WireEncoder.key(.tab, modifiers: []),
+            [0x07, 0x01, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            WireEncoder.key(.up, modifiers: []),
+            [0x07, 0x01, 0x00, 0x04, 0x00, 0x00, 0x01, 0x00, 0x00]
+        )
+    }
+
+    func testFunctionKeyGoesThroughTheSameEncoder() {
+        // M1's functionKey(20, [.control, .option]) must stay byte-identical.
+        XCTAssertEqual(
+            WireEncoder.key(.function(20), modifiers: [.control, .option]),
+            WireEncoder.functionKey(20, modifiers: [.control, .option])
+        )
+    }
 }
