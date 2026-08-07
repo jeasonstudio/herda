@@ -1348,3 +1348,36 @@ cd macos-client && git add -A && git commit -m "docs: record M3 acceptance resul
 **范围外（有意不做）**：tab 层级展示（`tabs` 已在 snapshot 里但侧边栏只做 workspace → agent 两层）、侧边栏宽度拖拽、右键菜单、workspace 重命名/新建等写操作（除 focus）、`layouts` 与 `agents` 数组（agent 信息已能从 `panes` 的 `agent` 字段得到）。
 
 **类型一致性**：`WorkspaceInfo` / `PaneInfo` / `AgentStatus` / `SessionSnapshot` / `SessionSnapshotEnvelope` / `ApiTypes.decoder` / `ApiTypes.classify` / `LineReader` / `ApiClient.EventPump` / `SidebarModel.apply` / `handle(event:data:)` / `agents(inWorkspace:)` 在各 task 间命名一致。Task 6 依赖 M2 的 `log` 与 `reportFocus`——若 M2 未先完成，`reportFocus` 与 `.onReceive` 两处需一并从 Task 6 移除。
+
+---
+
+## M3 验收结果（2026-08-07）
+
+**结论：通过。** 7 个 task 全部完成，代码侧机器验证全绿，GUI 侧人工验收全部通过。验收过程暴露了三个实现缺陷，均已定位根因并修复。
+
+**机器验证**
+
+- 全量测试 `** TEST SUCCEEDED **`，`Test Case ... passed` 计数 144（M2 结束时 116，M3 新增约 28 个）。
+- Debug app `** BUILD SUCCEEDED **`，完整 UI 层（含 SidebarView 接线）可编译运行。
+
+**人工验收（在 Debug 原型窗口逐项确认，全部通过）**
+
+- [x] 侧边栏列出所有 workspace，按编号排序
+- [x] 运行 agent 的 pane 显示为 agent 行，含名称与标题
+- [x] `agent_status` 颜色点随 agent 状态实时变化（无需重启）
+- [x] 新建 workspace 后侧边栏自动出现该项
+- [x] 关闭 workspace 后侧边栏自动移除
+- [x] 点击 workspace 切换终端区内容
+- [x] 点击 agent 行切到对应 pane
+- [x] 当前 focus 项有高亮
+- [x] 两条通道独立（侧边栏不影响终端打字）
+- [x] 终端区宽度已扣除侧边栏，内容不被裁切
+- [x] herdr 原生侧边栏不再出现（含 workspace 操作之后）
+
+**验收发现并修复的缺陷（用真实事件流实测定位，非推测）**
+
+1. **agent 行不显示**：两个叠加 bug。(a) `pane_agent_detected` 事件的真实结构是平铺的 `{agent, pane_id, workspace_id}`，无 `pane` 对象，原代码按 `pane` 对象解码直接丢弃了检测。(b) `panesById` 未声明 `@Published`，pane 事件更新它时 SwiftUI 不重绘。修复：按平铺字段处理，用独立的 `agentByPaneId` 记录检测（避免后续无 agent 字段的 `pane_updated` 覆盖），`panesById` 改为 `@Published`。commit `ba32a1a`。
+2. **focus 高亮不生效**：`pane_focused` 同样是平铺 `{pane_id, workspace_id}`，原代码按 `pane` 对象解码，`focusedPaneId` 从不更新。修复同上 commit。
+3. **herdr 原生侧边栏在 workspace 操作后重现**：M1 的「启动后发一次 `toggle_sidebar`」是脆弱的切换，workspace 操作会让 herdr 内部把侧边栏重新展开。改用配置 `sidebar_start_collapsed = true`（配合 `hidden` 模式），使其从第一帧起即隐藏、不依赖运行时状态，并移除启动 toggle。commit `a41b3da`。
+
+**过程记录**：M3 Task 1–5 的代码在本会话开始前已由一个并发进程提交到 git 历史（`e25774c`..`a17d679`），当时工作树处于文件被删的中间态。确认该进程已停止后，从 HEAD 恢复工作树、独立跑全量测试验证其正确（140 passed），再继续实现 Task 6（含修复计划未预见的 `[String: Any]` 跨 actor 边界 Swift 6 障碍，用 `@unchecked Sendable` box）与 Task 7 验收。
