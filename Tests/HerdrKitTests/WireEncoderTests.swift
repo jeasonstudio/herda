@@ -42,4 +42,35 @@ final class WireEncoderTests: XCTestCase {
         XCTAssertEqual(try Framing.payloadLength(from: Array(framed[0 ..< 4])), 9)
         XCTAssertEqual(Array(framed[4...]), payload)
     }
+
+    func testFunctionKeyMatchesGoldenBytes() {
+        let payload = WireEncoder.functionKey(20, modifiers: WireEncoder.Modifiers.control.union(.option))
+        XCTAssertEqual(
+            payload,
+            [
+                0x07,  // ClientMessage::InputEvents
+                0x01,  // events.count == 1
+                0x00,  // ClientInputEvent::Key
+                0x10,  // ClientKeyCode::F  (variant 16)
+                0x14,  // F payload: 20 (u8, single byte)
+                0x06,  // modifiers: CONTROL(2) | ALT(4)
+                0x00,  // ClientKeyKind::Press
+                0x01,  // repeat_count 1
+                0x00,  // generated_text: None
+                0x00,  // ClientKeySource::Synthesized
+            ]
+        )
+    }
+
+    func testModifierBitsMatchCrosstermLayout() {
+        XCTAssertEqual(WireEncoder.Modifiers.shift.rawValue, 1)
+        XCTAssertEqual(WireEncoder.Modifiers.control.rawValue, 2)
+        XCTAssertEqual(WireEncoder.Modifiers.option.rawValue, 4)
+        XCTAssertEqual(WireEncoder.Modifiers.command.rawValue, 8)
+    }
+
+    func testFunctionKeyWithoutModifiers() {
+        let payload = WireEncoder.functionKey(1, modifiers: [])
+        XCTAssertEqual(payload, [0x07, 0x01, 0x00, 0x10, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00])
+    }
 }
