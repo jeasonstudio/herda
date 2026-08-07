@@ -1,3 +1,4 @@
+import Combine
 import HerdrKit
 import SwiftUI
 
@@ -10,6 +11,16 @@ struct ContentView: View {
                 GridViewRepresentable(view: session.view)
                     .onAppear { session.start(viewportSize: geometry.size) }
                     .onChange(of: geometry.size) { _, size in session.resize(to: size) }
+                    .onReceive(
+                        NotificationCenter.default.publisher(
+                            for: NSWindow.didBecomeKeyNotification
+                        )
+                    ) { _ in session.reportFocus(gained: true) }
+                    .onReceive(
+                        NotificationCenter.default.publisher(
+                            for: NSWindow.didResignKeyNotification
+                        )
+                    ) { _ in session.reportFocus(gained: false) }
 
                 switch session.state {
                 case .idle, .starting:

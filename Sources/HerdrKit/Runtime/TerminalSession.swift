@@ -71,6 +71,9 @@ public final class TerminalSession: ObservableObject {
     private func attach(_ connection: ClientProtocolConn) {
         self.connection = connection
         state = .running
+        view.onPayload = { [weak self] payload in
+            Task { @MainActor in self?.send(payload) }
+        }
         log("handshake ok, read loop starting")
         connection.startReadLoop(
             onFrame: { [weak self] frame in
@@ -134,6 +137,22 @@ public final class TerminalSession: ObservableObject {
             message += "\n\nserver stderr:\n" + stderr
         }
         state = .failed(message)
+    }
+
+    /// Sends an already-encoded payload. Input failures are logged rather than
+    /// surfaced: a dropped keypress must not tear down the session.
+    private func send(_ payload: [UInt8]) {
+        guard let connection else { return }
+        do {
+            try connection.send(payload)
+        } catch {
+            log("input send failed: \(error)")
+        }
+    }
+
+    public func reportFocus(gained: Bool) {
+        guard case .running = state else { return }
+        send(WireEncoder.focus(gained: gained))
     }
 
     public func resize(to size: CGSize) {
