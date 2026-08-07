@@ -124,6 +124,7 @@ final class ClientProtocolConnTests: XCTestCase {
                 received.fulfill()
             },
             onShutdown: { _ in },
+            onClipboard: { _ in },
             onFailure: { XCTFail("unexpected failure: \($0)") }
         )
         wait(for: [received], timeout: 5)
@@ -150,6 +151,7 @@ final class ClientProtocolConnTests: XCTestCase {
                 box.reason = reason
                 notified.fulfill()
             },
+            onClipboard: { _ in },
             onFailure: { _ in }
         )
         wait(for: [notified], timeout: 5)

@@ -58,6 +58,7 @@ public final class ClientProtocolConn: @unchecked Sendable {
     public func startReadLoop(
         onFrame: @escaping @Sendable (GridFrame) -> Void,
         onShutdown: @escaping @Sendable (String?) -> Void,
+        onClipboard: @escaping @Sendable (String) -> Void,
         onFailure: @escaping @Sendable (Error) -> Void
     ) {
         let thread = Thread { [weak self] in
@@ -70,8 +71,9 @@ public final class ClientProtocolConn: @unchecked Sendable {
                     case .shutdown(let reason):
                         onShutdown(reason)
                         return
-                    case .clipboard, .welcome, .ignored:
-                        // Clipboard is wired to the pasteboard in Task 11.
+                    case .clipboard(let base64):
+                        onClipboard(base64)
+                    case .welcome, .ignored:
                         continue
                     }
                 } catch {

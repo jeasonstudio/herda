@@ -69,6 +69,16 @@ public final class TerminalGridView: NSView {
     }
 
     public override func keyDown(with event: NSEvent) {
+        // cmd+v is handled locally: the pane cannot read the host pasteboard.
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "v"
+        {
+            if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
+                onPayload?(WireEncoder.paste(text))
+            }
+            return
+        }
+
         switch KeyMap.decide(
             keyCode: event.keyCode,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,

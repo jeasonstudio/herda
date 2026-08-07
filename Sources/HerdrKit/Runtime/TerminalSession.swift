@@ -87,6 +87,9 @@ public final class TerminalSession: ObservableObject {
                     self?.state = .disconnected(reason ?? "server shut down")
                 }
             },
+            onClipboard: { [weak self] base64 in
+                Task { @MainActor in self?.copyToPasteboard(base64: base64) }
+            },
             onFailure: { [weak self] error in
                 Task { @MainActor in
                     self?.state = .disconnected(String(describing: error))
@@ -137,6 +140,19 @@ public final class TerminalSession: ObservableObject {
             message += "\n\nserver stderr:\n" + stderr
         }
         state = .failed(message)
+    }
+
+    /// herdr forwards OSC 52 as base64. Decode failures are ignored — a bad
+    /// clipboard payload is not worth interrupting the session for.
+    private func copyToPasteboard(base64: String) {
+        guard let data = Data(base64Encoded: base64),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            log("clipboard payload was not valid base64 utf8")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Sends an already-encoded payload. Input failures are logged rather than
