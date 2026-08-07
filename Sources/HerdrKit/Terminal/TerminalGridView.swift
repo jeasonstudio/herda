@@ -17,8 +17,8 @@ public final class TerminalGridView: NSView {
 
     public init(
         font: NSFont,
-        foreground: NSColor = NSColor(srgbRed: 0.85, green: 0.85, blue: 0.85, alpha: 1),
-        background: NSColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+        foreground: NSColor = TerminalPalette.ghostty.defaultForeground.nsColor,
+        background: NSColor = TerminalPalette.ghostty.defaultBackground.nsColor
     ) {
         self.regularFont = font
         let manager = NSFontManager.shared

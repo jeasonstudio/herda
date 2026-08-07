@@ -28,30 +28,15 @@ public enum TerminalColor: Equatable, Sendable {
         }
     }
 
-    /// ratatui named colors. Index 0 is Reset; 1…16 follow the enum order
-    /// Black, Red, Green, Yellow, Blue, Magenta, Cyan, Gray, DarkGray,
-    /// LightRed, LightGreen, LightYellow, LightBlue, LightMagenta, LightCyan,
-    /// White. Note Gray is ANSI 7 and DarkGray is ANSI 8.
+    /// ratatui named colors. Index 0 is Reset; 1…16 map to ANSI 0…15 in the
+    /// same order as `TerminalPalette.ghostty.ansi` (Black, Red, Green, Yellow,
+    /// Blue, Magenta, Cyan, Gray/white, DarkGray/bright-black, then the bright
+    /// variants). Resolving through the shared ghostty table keeps the
+    /// terminal's colors identical to what herdr actually renders.
     private static func named(_ index: UInt8) -> TerminalColor {
-        switch index {
-        case 1: return .rgb(0, 0, 0)
-        case 2: return .rgb(205, 49, 49)
-        case 3: return .rgb(13, 188, 121)
-        case 4: return .rgb(229, 229, 16)
-        case 5: return .rgb(36, 114, 200)
-        case 6: return .rgb(188, 63, 188)
-        case 7: return .rgb(17, 168, 205)
-        case 8: return .rgb(229, 229, 229)
-        case 9: return .rgb(102, 102, 102)
-        case 10: return .rgb(241, 76, 76)
-        case 11: return .rgb(35, 209, 139)
-        case 12: return .rgb(245, 245, 67)
-        case 13: return .rgb(59, 142, 234)
-        case 14: return .rgb(214, 112, 214)
-        case 15: return .rgb(41, 184, 219)
-        case 16: return .rgb(255, 255, 255)
-        default: return .reset
-        }
+        guard (1 ... 16).contains(index) else { return .reset }
+        let color = TerminalPalette.ghostty.ansi[Int(index) - 1]
+        return .rgb(color.red, color.green, color.blue)
     }
 
     /// Standard xterm 256-color palette.

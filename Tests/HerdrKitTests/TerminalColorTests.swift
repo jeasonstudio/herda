@@ -7,8 +7,9 @@ final class TerminalColorTests: XCTestCase {
     }
 
     func testNamedColorsMapToConcreteRGB() {
-        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_01), .rgb(0, 0, 0))          // Black
-        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_10), .rgb(255, 255, 255))    // White
+        // ghostty "Tomorrow Night" base16 — the client's actual terminal defaults.
+        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_01), .rgb(0x1D, 0x1F, 0x21))  // Black
+        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_10), .rgb(0xEA, 0xEA, 0xEA))  // White (bright)
     }
 
     func testNamedGrayAndDarkGrayAreDistinct() {
@@ -26,8 +27,8 @@ final class TerminalColorTests: XCTestCase {
 
     func testIndexedBasicRangeMatchesNamedColors() {
         // Palette 0...15 are the same sixteen colors as the named variants.
-        XCTAssertEqual(TerminalColor.unpack(0x01_00_00_00), .rgb(0, 0, 0))
-        XCTAssertEqual(TerminalColor.unpack(0x01_00_00_0F), .rgb(255, 255, 255))
+        XCTAssertEqual(TerminalColor.unpack(0x01_00_00_00), .rgb(0x1D, 0x1F, 0x21))
+        XCTAssertEqual(TerminalColor.unpack(0x01_00_00_0F), .rgb(0xEA, 0xEA, 0xEA))
     }
 
     func testIndexedCubeUsesStandardLevels() {
