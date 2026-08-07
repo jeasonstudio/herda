@@ -81,12 +81,16 @@ App 是 server 的父进程。server 以 headless 模式运行（`herdr server`�
 开发机上已有一个运行中的 herdr session（约 22 个 pane）。原型的 server 必须完全隔离。给子进程设置：
 
 ```
-XDG_CONFIG_HOME = <Support>/runtime/config    → config_dir() = <Support>/runtime/config/herdr
-XDG_STATE_HOME  = <Support>/runtime/state
-HERDR_SESSION   = mac-prototype               → 独立 socket 与数据目录
+HERDR_SOCKET_PATH = <Support>/runtime/herdr.sock   → API socket；client socket 由它派生
+XDG_CONFIG_HOME   = <Support>/runtime/config       → config_dir() = <Support>/runtime/config/herdr
+XDG_STATE_HOME    = <Support>/runtime/state
 ```
 
-其中 `<Support>` = `~/Library/Application Support/dev.herdr.macos-client-prototype`。依据：`src/config/io.rs:29` 的 `config_dir()`、`src/session.rs:10` 的 `SESSION_ENV_VAR`。
+其中 `<Support>` = `~/Library/Application Support/dev.herdr.macos-client-prototype`。依据：`src/config/io.rs:29` 的 `config_dir()`、`src/server/socket_paths.rs` 的 socket 解析。
+
+**用 `HERDR_SOCKET_PATH` 而非 `HERDR_SESSION`。** 前者优先级最高，且 client socket 由它按「在 `.sock` 前插入 `-client`」的规则派生（`herdr.sock` → `herdr-client.sock`），两个路径因此完全确定，无需推断具名 session 的路径规则。该派生规则已由探针实证。注意两者不能混用：`client_socket_path()` 在检测到显式 session 时会走 session 分支并忽略 `HERDR_SOCKET_PATH`。
+
+**必须先清除继承的所有 `HERDR_*` 环境变量。** 这个 app 很可能本身就是从一个 herdr 会话里启动的（直接启动，或经由从 herdr 里启动的 Xcode），继承下来的 `HERDR_SOCKET_PATH` / `HERDR_CLIENT_SOCKET_PATH` / `HERDR_SESSION` 会把子进程指向开发者的真实 server。herdr 自己的 `CLAUDE.md` 也要求测试时用 `env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH` 清除它们。
 
 App 启动前在 `<Support>/runtime/config/herdr/config.toml` 写入：
 
@@ -95,13 +99,18 @@ App 启动前在 `<Support>/runtime/config/herdr/config.toml` 写入：
 sidebar_collapsed_mode = "hidden"
 
 [keys]
-prefix = "ctrl+b"
-toggle_sidebar = "prefix+f20"
+toggle_sidebar = "ctrl+alt+f20"
 ```
 
 `Hidden` 模式使 `sidebar_w = 0`，完全不占宽度（`src/ui.rs:229`）。
 
-把 `toggle_sidebar` 显式绑到冷僻键位（而非沿用默认 `prefix+b`）有两个好处：用户不可能误触把 sidebar 弄回来，因此**不需要在输入层做拦截**；键位在自己控制下，不受上游默认值变动影响。若 `f20` 这个键名不被 config 接受（实现时验证），回落到默认 `prefix+b` 并在 `InputTranslator` 中拦截它。
+把 `toggle_sidebar` 显式绑到 `ctrl+alt+f20` 有三个好处：
+
+1. 用户不可能误触把 sidebar 弄回来，因此**不需要在输入层做拦截**。
+2. 键位在自己控制下，不受上游默认值变动影响。
+3. **避开 `Char` 的 bincode 编码。** 默认的 `prefix+b` 要求先发 `ctrl+b`，即 `ClientKeyCode::Char('b')`；而 `char` 在 bincode 中的表示未经验证。改用带 modifier 的功能键后，只需 `F(u8)` 变体（变体序号 16，payload 为单字节），M1 无需实现 `Char` 编码。
+
+语法依据：`parse_key_combo`（`src/config/keybinds.rs:1201`）按 `+` 分割并识别 modifier token；`keybinds.rs:1259` 的 `s.starts_with('f') => s[1..].parse::<u8>()` 将 `f20` 解析为 `KeyCode::F(20)`。`modifiers: u8` 直接经 `KeyModifiers::from_bits_truncate` 还原（`src/protocol/wire.rs:305`），故 `ctrl+alt` = `2 | 4` = `6`（crossterm 0.29 位定义：SHIFT=1、CONTROL=2、ALT=4、SUPER=8）。
 
 ### 启动序列（顺序敏感）
 
@@ -111,7 +120,7 @@ toggle_sidebar = "prefix+f20"
 4. `ApiClient` 连 API socket，`ping` 确认存活
 5. `ClientProtocolConn` 连 client socket，发 `Hello{App, SemanticFrame, cols, rows}`；`cols`/`rows` 由终端区视图的像素尺寸除以 cell 尺寸得出（cell 尺寸取自所选等宽字体的 advance width 与 line height）
 6. 收 `Welcome`，**校验 `version == 19`，不等则报错退出**，不尝试兼容
-7. 发一次 `prefix+f20`（§4 中自己绑定的键位）隐藏 sidebar
+7. 发一次 `ctrl+alt+f20`（§4 中自己绑定的键位）隐藏 sidebar
 8. 开始收帧渲染；`ApiClient` 订阅事件，侧边栏上线
 
 第 7 步是方案 A 唯一的 hack。原因：`sidebar_collapsed` 是运行时状态（`src/app/state.rs:1873` 默认 `false`），config 无对应初始值，persist 也不保存它，API 亦无相应方法。因此只能通过按键 toggle 一次。
@@ -128,20 +137,27 @@ toggle_sidebar = "prefix+f20"
 
 ## 5. 组件划分
 
+工程由 `xcodegen` 从 `project.yml` 生成（本机已装），产出标准 `.xcodeproj`。三个 target：
+
 ```
 macos-client/
-  macos-client.xcodeproj
+  project.yml                      # xcodegen 输入，.xcodeproj 由它生成
   Sources/
-    App/          入口、窗口、主 split（原生侧边栏 | 终端区）
-    Runtime/      HerdrRuntime
-    Protocol/     WireCodec · ClientProtocolConn · ApiClient
-    Terminal/     TerminalGridView · InputTranslator · CharWidth
-    Sidebar/      SidebarView · SidebarViewModel
+    HerdrKit/                      # framework：全部逻辑
+      Runtime/     HerdrRuntime · RuntimePaths
+      Protocol/    Varint · ByteReader · Framing · WireTypes
+                   WireEncoder · WireDecoder · ClientProtocolConn · ApiClient
+      Terminal/    CharWidth · TerminalColor · TerminalGridView · InputTranslator
+      Sidebar/     SidebarViewModel
+    HerdrPrototype/                # application：仅 UI 入口
+      HerdrPrototypeApp.swift · ContentView.swift · SidebarView.swift
   Tests/
-    WireCodecTests · InputTranslatorTests · CharWidthTests
+    HerdrKitTests/                 # 只依赖 framework，不需要 host app
   docs/
-    design.md
+    design.md · plan-m1.md
 ```
+
+**逻辑必须放在 framework 而非 app target。** 若单元测试以 app 为 test host，运行测试会启动 app，连带执行启动序列并 spawn 一个真实的 herdr server——这会让测试产生副作用且变慢。framework 结构使 `HerdrKitTests` 无需 host app。
 
 | 组件 | 职责 | 依赖 | 明确不管 |
 |---|---|---|---|
@@ -149,7 +165,7 @@ macos-client/
 | `WireCodec` | bincode varint + framing + 消息编解码 | 无（纯函数） | IO |
 | `ClientProtocolConn` | 一条 client socket 的握手与收发循环 | `WireCodec` | 渲染、布局 |
 | `TerminalGridView` | `FrameData` → Core Text 绘制 | `CharWidth` | 输入、协议 |
-| `InputTranslator` | `NSEvent` → `ClientInputEvent` | `CharWidth`（鼠标坐标换算） | IO |
+| `InputTranslator` | `NSEvent` → `ClientInputEvent`（M2） | `CharWidth`（鼠标坐标换算） | IO |
 | `ApiClient` | NDJSON 请求 + `events.subscribe` | 无 | wire 协议 |
 | `SidebarViewModel` | workspace / agent 状态与用户意图 | `ApiClient` | 终端 |
 
@@ -209,7 +225,9 @@ enum 按变体序号（varint）编码；`String` / `Vec<T>` 为 varint 长度�
 
 键盘 / 鼠标 → `InputEvents`（复用 M1 已打通的编码路径），IME → `TextCommit`，剪贴板，`Resize`。
 
-验收：打字回显无感延迟 · `ctrl+b` 系列快捷键正常（含 `prefix+b` 现为未绑定、按下无副作用）· 中文输入法能 commit · resize 后重排正确
+验收：打字回显无感延迟 · `ctrl+b` 系列快捷键正常（含默认的 `prefix+b` 现为未绑定、按下无副作用）· 中文输入法能 commit · resize 后重排正确
+
+注：M2 处理用户输入时才需要 `ClientKeyCode::Char`，其 bincode 表示届时必须先验证（写一小段 Rust 编码 `'b'` 观察字节）。普通文本输入优先走 `TextCommit(String)`，`Char` 只用于带 modifier 的字母组合（如 `ctrl+c`）。
 
 ### M3 — 原生侧边栏
 
@@ -266,4 +284,5 @@ M1 + M2 + M3 合起来构成"最小日常可用闭环"。M1 不过关则后两�
 | 手写 bincode 解码器静默错位 | 结构定义抄错会产生难查的花屏 | 严格字节数校验 + golden fixture 来自真实字节 |
 | 协议版本 bump | herdr 演进会改 `PROTOCOL_VERSION` | 自带 runtime 使两者一起版本化；启动时严格校验并明确报错 |
 | 方案 A 原生感不足 | 分隔线与 modal 仍为字符绘制 | 已知并接受；验证成立后可走向 per-pane 原生 view |
-| sidebar toggle hack 失效 | 上游若改折叠语义，或 `f20` 键名不被 config 接受 | 键位由自己的 config 显式指定，不依赖上游默认值；失效时表现为 sidebar 未隐藏，一眼可见。键名不被接受则回落默认 `prefix+b` + 输入层拦截 |
+| sidebar toggle hack 失效 | 上游若改折叠语义 | 键位由自己的 config 显式指定（语法已对照 `keybinds.rs:1201/1259` 确认），不依赖上游默认值；失效时表现为 sidebar 未隐藏，一眼可见 |
+| `Char` 的 bincode 表示未验证 | M1 已通过改用 `ctrl+alt+f20` 规避；M2 处理字母键时会遇到 | M2 开始前先用一小段 Rust 确认 `char` 编码；文本输入优先走 `TextCommit` |
