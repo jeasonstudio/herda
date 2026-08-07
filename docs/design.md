@@ -201,6 +201,17 @@ enum 按变体序号（varint）编码；`String` / `Vec<T>` 为 varint 长度�
 
 **modifier**：ratatui `Modifier` 位，另有 underline style 占高 4 位（`UNDERLINE_STYLE_SHIFT = 12`，mask `0xF000`）。
 
+**`char` 编码（已实测，M2 需要）**：bincode 2 `standard` 把 `char` 编码为 **UTF-8 字节序列，不带长度前缀**——这与 `String`（varint 长度 + UTF-8）不同，是容易写错之处。
+
+```
+'b'  (U+0062)  -> 62               Char('b')  -> 0f 62
+'é'  (U+00E9)  -> c3 a9            Char('更') -> 0f e6 9b b4
+'更' (U+66F4)  -> e6 9b b4         F(20)      -> 10 14
+'👍' (U+1F44D) -> f0 9f 91 8d
+```
+
+对 ASCII 恰好与 u32 varint 相同（`'b'` 均为 `62`），但非 ASCII 完全不同（`'更'` 的 varint 是 `fb f4 66`）。M2 只需 ASCII 字母组合（`ctrl+c` 之类），普通文本走 `TextCommit(String)`。已确认变体序号：`Enter`=1、`Esc`=14、`Char`=15、`F`=16。
+
 ## 6. 数据流
 
 ```
@@ -288,4 +299,4 @@ M1 + M2 + M3 合起来构成"最小日常可用闭环"。M1 不过关则后两�
 | 协议版本 bump | herdr 演进会改 `PROTOCOL_VERSION` | 自带 runtime 使两者一起版本化；启动时严格校验并明确报错 |
 | 方案 A 原生感不足 | 分隔线与 modal 仍为字符绘制 | 已知并接受；验证成立后可走向 per-pane 原生 view |
 | ~~sidebar toggle 无效~~ **（M1 已解决）** | 根因是 `Mode::Onboarding`：首次运行时 server 停在引导模式，`input/mod.rs:99` 会把每个按键交给 `handle_onboarding_key`，**在 keybinding 匹配之前就吞掉**，所以 toggle 从不触发；同时引导浮层遮住终端，而 M1 没有输入层、用户也无法关掉它 | config 顶层加 `onboarding = false`（依据 `config/model.rs:1741`）。必须置于所有 `[section]` 之前，否则会被当成该 section 的键而静默失效——已有测试守护此顺序 |
-| `Char` 的 bincode 表示未验证 | M1 已通过改用 `ctrl+alt+f20` 规避；M2 处理字母键时会遇到 | M2 开始前先用一小段 Rust 确认 `char` 编码；文本输入优先走 `TextCommit` |
+| ~~`Char` 的 bincode 表示未验证~~ **（已实测确认）** | 曾是 M2 的前置未知 | `char` = UTF-8 字节、无长度前缀（详见 §5）。M2 只需 ASCII 字母组合，文本输入走 `TextCommit` |
