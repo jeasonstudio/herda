@@ -24,7 +24,6 @@ public final class TerminalSession: ObservableObject {
     private let paths: RuntimePaths
     private var runtime: HerdrRuntime?
     private var connection: ClientProtocolConn?
-    private var needsSidebarToggle = true
     private var api: ApiClient?
     private var eventPump: ApiClient.EventPump?
 
@@ -81,10 +80,7 @@ public final class TerminalSession: ObservableObject {
         log("handshake ok, read loop starting")
         connection.startReadLoop(
             onFrame: { [weak self] frame in
-                Task { @MainActor in
-                    self?.view.update(frame)
-                    self?.hideServerSidebarIfNeeded()
-                }
+                Task { @MainActor in self?.view.update(frame) }
             },
             onShutdown: { [weak self] reason in
                 Task { @MainActor in
@@ -153,26 +149,6 @@ public final class TerminalSession: ObservableObject {
             } catch {
                 await MainActor.run { self?.log("focus pane failed: \(error)") }
             }
-        }
-    }
-
-    /// Hides herdr's own sidebar, since the native UI replaces it.
-    ///
-    /// Deliberately sent after the first frame rather than right after the
-    /// handshake. The server writes `Welcome` *before* registering the client
-    /// (see `client_transport.rs`), so input sent immediately on handshake can
-    /// reach the main loop before the client exists and be dropped. Receiving a
-    /// frame proves registration completed.
-    private func hideServerSidebarIfNeeded() {
-        guard needsSidebarToggle, let connection else { return }
-        needsSidebarToggle = false
-        let payload = WireEncoder.functionKey(20, modifiers: [.control, .option])
-        let hex = payload.map { String(format: "%02x", $0) }.joined(separator: " ")
-        do {
-            try connection.send(payload)
-            log("sent sidebar toggle: \(hex)")
-        } catch {
-            log("sidebar toggle FAILED: \(error) bytes=\(hex)")
         }
     }
 

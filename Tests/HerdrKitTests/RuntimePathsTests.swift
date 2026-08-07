@@ -19,18 +19,18 @@ final class RuntimePathsTests: XCTestCase {
         XCTAssertEqual(paths.configFile.path, "/tmp/herdr-proto-test/config/herdr/config.toml")
     }
 
-    func testConfigContentsHidesSidebarAndBindsToggle() {
+    func testConfigContentsHidesSidebarFromTheFirstFrame() {
+        // Starting collapsed (not a runtime toggle) is what keeps herdr's own
+        // sidebar hidden even after workspace operations re-expand it server-side.
         let toml = paths.configContents
+        XCTAssertTrue(toml.contains("sidebar_start_collapsed = true"))
         XCTAssertTrue(toml.contains("sidebar_collapsed_mode = \"hidden\""))
-        XCTAssertTrue(toml.contains("toggle_sidebar = \"ctrl+alt+f20\""))
         XCTAssertTrue(toml.contains("[ui]"))
-        XCTAssertTrue(toml.contains("[keys]"))
     }
 
     func testConfigContentsDisablesOnboarding() {
-        // Not cosmetic: Mode::Onboarding swallows every key before keybinding
-        // matching, which blocks the sidebar toggle and leaves a first-run
-        // overlay the prototype has no way to dismiss (no input layer in M1).
+        // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
+        // overlay, and it takes over input handling before anything else.
         XCTAssertTrue(paths.configContents.contains("onboarding = false"))
     }
 

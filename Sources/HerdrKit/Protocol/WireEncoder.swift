@@ -183,7 +183,7 @@ public enum WireEncoder {
         return out
     }
 
-    /// Kept for the startup sidebar toggle; delegates to `key`.
+    /// Convenience for a function-key press; delegates to `key`.
     public static func functionKey(_ number: UInt8, modifiers: Modifiers) -> [UInt8] {
         key(.function(number), modifiers: modifiers)
     }
