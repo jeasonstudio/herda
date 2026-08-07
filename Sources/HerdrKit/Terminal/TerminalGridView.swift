@@ -87,6 +87,50 @@ public final class TerminalGridView: NSView {
     /// Swallow the system beep for keys the pane consumes.
     public override func doCommand(by selector: Selector) {}
 
+    /// Converts a point in view coordinates to a cell position. The view is
+    /// flipped, so y increases downward and matches the row order directly.
+    public func cellPosition(for point: CGPoint) -> (column: UInt16, row: UInt16) {
+        let column = max(0, Int(point.x / cellSize.width))
+        let row = max(0, Int(point.y / cellSize.height))
+        return (
+            UInt16(min(column, Int(UInt16.max))),
+            UInt16(min(row, Int(UInt16.max)))
+        )
+    }
+
+    private func sendMouse(_ kind: WireEncoder.MouseKind, _ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let position = cellPosition(for: point)
+        onPayload?(
+            WireEncoder.mouse(
+                kind,
+                column: position.column,
+                row: position.row,
+                modifiers: KeyMap.modifiers(from: event.modifierFlags)
+            )
+        )
+    }
+
+    public override func mouseDown(with event: NSEvent) { sendMouse(.down(.left), event) }
+    public override func mouseUp(with event: NSEvent) { sendMouse(.up(.left), event) }
+    public override func mouseDragged(with event: NSEvent) { sendMouse(.drag(.left), event) }
+    public override func rightMouseDown(with event: NSEvent) { sendMouse(.down(.right), event) }
+    public override func rightMouseUp(with event: NSEvent) { sendMouse(.up(.right), event) }
+
+    public override func scrollWheel(with event: NSEvent) {
+        // One event per notch; herdr treats each as a discrete scroll step.
+        if event.scrollingDeltaY > 0 {
+            sendMouse(.scrollUp, event)
+        } else if event.scrollingDeltaY < 0 {
+            sendMouse(.scrollDown, event)
+        }
+        if event.scrollingDeltaX > 0 {
+            sendMouse(.scrollLeft, event)
+        } else if event.scrollingDeltaX < 0 {
+            sendMouse(.scrollRight, event)
+        }
+    }
+
     /// Row 0 must be at the top, matching the row-major cell order.
     public override var isFlipped: Bool { true }
 

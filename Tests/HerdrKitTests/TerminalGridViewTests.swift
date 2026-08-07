@@ -61,4 +61,27 @@ final class TerminalGridViewTests: XCTestCase {
         subject.update(frame)
         XCTAssertEqual(subject.currentFrame, frame)
     }
+
+    func testConvertsPointToCellCoordinates() {
+        let subject = view
+        let cell = subject.cellSize
+        let point = CGPoint(x: cell.width * 3 + 2, y: cell.height * 5 + 2)
+        let position = subject.cellPosition(for: point)
+        XCTAssertEqual(position.column, 3)
+        XCTAssertEqual(position.row, 5)
+    }
+
+    func testClampsNegativeCoordinatesToOrigin() {
+        let position = view.cellPosition(for: CGPoint(x: -50, y: -50))
+        XCTAssertEqual(position.column, 0)
+        XCTAssertEqual(position.row, 0)
+    }
+
+    func testCellPositionAtExactBoundaryBelongsToNextCell() {
+        let subject = view
+        let cell = subject.cellSize
+        let position = subject.cellPosition(for: CGPoint(x: cell.width, y: cell.height))
+        XCTAssertEqual(position.column, 1)
+        XCTAssertEqual(position.row, 1)
+    }
 }
