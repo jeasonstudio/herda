@@ -151,4 +151,37 @@ final class WireEncoderTests: XCTestCase {
     func testEmptyTextCommitStillEncodes() {
         XCTAssertEqual(WireEncoder.textCommit(""), [0x07, 0x01, 0x01, 0x00])
     }
+
+    func testMouseDownMatchesMeasuredBytes() {
+        XCTAssertEqual(
+            WireEncoder.mouse(.down(.left), column: 3, row: 4, modifiers: []),
+            [0x07, 0x01, 0x02, 0x00, 0x00, 0x03, 0x04, 0x00]
+        )
+    }
+
+    func testMouseUpWithRightButtonAndWideColumn() {
+        // Column 300 needs the varint 251 tag plus a little-endian u16.
+        XCTAssertEqual(
+            WireEncoder.mouse(.up(.right), column: 300, row: 5, modifiers: []),
+            [0x07, 0x01, 0x02, 0x01, 0x01, 251, 0x2C, 0x01, 0x05, 0x00]
+        )
+    }
+
+    func testMouseDragCarriesModifiers() {
+        XCTAssertEqual(
+            WireEncoder.mouse(.drag(.left), column: 1, row: 2, modifiers: .shift),
+            [0x07, 0x01, 0x02, 0x02, 0x00, 0x01, 0x02, 0x01]
+        )
+    }
+
+    func testScrollKindsHaveNoButtonPayload() {
+        XCTAssertEqual(
+            WireEncoder.mouse(.scrollUp, column: 0, row: 0, modifiers: []),
+            [0x07, 0x01, 0x02, 0x04, 0x00, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            WireEncoder.mouse(.scrollDown, column: 7, row: 8, modifiers: []),
+            [0x07, 0x01, 0x02, 0x05, 0x07, 0x08, 0x00]
+        )
+    }
 }

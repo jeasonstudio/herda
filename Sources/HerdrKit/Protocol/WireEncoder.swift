@@ -187,4 +187,62 @@ public enum WireEncoder {
     public static func functionKey(_ number: UInt8, modifiers: Modifiers) -> [UInt8] {
         key(.function(number), modifiers: modifiers)
     }
+
+    public enum MouseButton: UInt64, Sendable {
+        case left = 0
+        case right = 1
+        case middle = 2
+    }
+
+    /// Mirrors `ClientMouseKind`. Down/Up/Drag carry a button payload; the
+    /// scroll and moved variants do not.
+    public enum MouseKind: Equatable, Sendable {
+        case down(MouseButton)
+        case up(MouseButton)
+        case drag(MouseButton)
+        case moved
+        case scrollUp
+        case scrollDown
+        case scrollLeft
+        case scrollRight
+
+        var variant: UInt64 {
+            switch self {
+            case .down: return 0
+            case .up: return 1
+            case .drag: return 2
+            case .moved: return 3
+            case .scrollUp: return 4
+            case .scrollDown: return 5
+            case .scrollLeft: return 6
+            case .scrollRight: return 7
+            }
+        }
+
+        var button: MouseButton? {
+            switch self {
+            case .down(let button), .up(let button), .drag(let button):
+                return button
+            default:
+                return nil
+            }
+        }
+    }
+
+    public static func mouse(
+        _ kind: MouseKind,
+        column: UInt16,
+        row: UInt16,
+        modifiers: Modifiers
+    ) -> [UInt8] {
+        var out = envelope(InputEvent.mouse.rawValue)
+        out += Varint.encode(kind.variant)
+        if let button = kind.button {
+            out += Varint.encode(button.rawValue)
+        }
+        out += Varint.encode(UInt64(column))
+        out += Varint.encode(UInt64(row))
+        out.append(modifiers.rawValue)     // u8, raw byte
+        return out
+    }
 }
