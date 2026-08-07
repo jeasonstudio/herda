@@ -64,3 +64,92 @@ public struct TerminalPalette: Sendable {
         ]
     )
 }
+
+/// herdr's UI-chrome palette — the tokens that theme herdr's own tab bar,
+/// panels, and status indicators (`Palette` in src/app/state.rs). NOT the
+/// terminal palette: herdr's `[theme]` never touches terminal content colors
+/// (see `TerminalPalette`). `sidebar_bg` is omitted: every one of herdr's 18
+/// built-in themes sets it to `Color::Reset`, so it carries no information.
+public struct ChromePalette: Hashable, Sendable {
+    public let accent: ThemeColor
+    public let panelBackground: ThemeColor
+    public let surface0: ThemeColor
+    public let surface1: ThemeColor
+    public let surfaceDim: ThemeColor
+    public let overlay0: ThemeColor
+    public let overlay1: ThemeColor
+    public let text: ThemeColor
+    public let subtext0: ThemeColor
+    public let mauve: ThemeColor
+    public let green: ThemeColor
+    public let yellow: ThemeColor
+    public let red: ThemeColor
+    public let blue: ThemeColor
+    public let teal: ThemeColor
+    public let peach: ThemeColor
+
+    public init(
+        accent: ThemeColor, panelBackground: ThemeColor, surface0: ThemeColor,
+        surface1: ThemeColor, surfaceDim: ThemeColor, overlay0: ThemeColor,
+        overlay1: ThemeColor, text: ThemeColor, subtext0: ThemeColor, mauve: ThemeColor,
+        green: ThemeColor, yellow: ThemeColor, red: ThemeColor, blue: ThemeColor,
+        teal: ThemeColor, peach: ThemeColor
+    ) {
+        self.accent = accent
+        self.panelBackground = panelBackground
+        self.surface0 = surface0
+        self.surface1 = surface1
+        self.surfaceDim = surfaceDim
+        self.overlay0 = overlay0
+        self.overlay1 = overlay1
+        self.text = text
+        self.subtext0 = subtext0
+        self.mauve = mauve
+        self.green = green
+        self.yellow = yellow
+        self.red = red
+        self.blue = blue
+        self.teal = teal
+        self.peach = peach
+    }
+}
+
+/// A named herdr theme: the chrome palette to draw the native sidebar with,
+/// plus the herdr `[theme]` name to write into config.toml so herdr's own
+/// chrome matches on its next launch. See `ThemeCatalog` for the built-in set.
+public struct Theme: Hashable, Sendable {
+    public let configName: String
+    public let displayName: String
+    public let chrome: ChromePalette
+
+    public init(configName: String, displayName: String, chrome: ChromePalette) {
+        self.configName = configName
+        self.displayName = displayName
+        self.chrome = chrome
+    }
+}
+
+extension Theme {
+    /// Extracts the `[theme]` section's `name` from an existing config.toml,
+    /// if present. A full TOML parser is unnecessary: this file is entirely
+    /// generated and owned by `RuntimePaths` (see `configContents`), so its
+    /// shape never varies beyond what this scan handles.
+    public static func name(fromConfig contents: String) -> String? {
+        var inThemeSection = false
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") {
+                inThemeSection = (trimmed == "[theme]")
+                continue
+            }
+            guard inThemeSection, let equals = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[trimmed.startIndex ..< equals].trimmingCharacters(in: .whitespaces)
+            guard key == "name" else { continue }
+            let value = trimmed[trimmed.index(after: equals)...]
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            return value.isEmpty ? nil : value
+        }
+        return nil
+    }
+}
