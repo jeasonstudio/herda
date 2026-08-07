@@ -9,15 +9,28 @@ struct ContentView: View {
         HStack(spacing: 0) {
             SidebarView(
                 model: session.sidebar,
+                theme: session.theme,
                 onSelectWorkspace: { session.focusWorkspace($0) },
                 onSelectPane: { session.focusPane($0) }
             )
             .frame(width: 220)
-            .background(.thinMaterial)
+            .background(session.theme.chrome.panelBackground.color)
 
             Divider()
 
             terminalArea
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Picker("Theme", selection: Binding(
+                    get: { session.theme },
+                    set: { session.setTheme($0) }
+                )) {
+                    ForEach(ThemeCatalog.all, id: \.self) { theme in
+                        Text(theme.displayName).tag(theme)
+                    }
+                }
+            }
         }
         .onDisappear { session.shutdown() }
     }

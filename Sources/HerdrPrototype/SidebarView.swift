@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
+    let theme: Theme
     let onSelectWorkspace: (String) -> Void
     let onSelectPane: (String) -> Void
 
@@ -22,12 +23,13 @@ struct SidebarView: View {
 
     private func workspaceRow(_ workspace: WorkspaceInfo) -> some View {
         HStack(spacing: 6) {
-            StatusDot(status: workspace.agentStatus)
+            StatusDot(status: workspace.agentStatus, chrome: theme.chrome)
             Text("\(workspace.number)")
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.chrome.subtext0.color)
             Text(workspace.label)
                 .font(.system(.body, design: .monospaced))
+                .foregroundStyle(theme.chrome.text.color)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -35,7 +37,7 @@ struct SidebarView: View {
         .padding(.vertical, 4)
         .background(
             workspace.workspaceId == model.focusedWorkspaceId
-                ? Color.accentColor.opacity(0.18)
+                ? theme.chrome.accent.color.opacity(0.18)
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 5)
         )
@@ -45,13 +47,14 @@ struct SidebarView: View {
 
     private func agentRow(_ pane: PaneInfo) -> some View {
         HStack(spacing: 6) {
-            StatusDot(status: pane.agentStatus)
+            StatusDot(status: pane.agentStatus, chrome: theme.chrome)
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.agentName(forPane: pane.paneId) ?? "agent")
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(theme.chrome.text.color)
                 Text(pane.terminalTitleStripped ?? pane.cwd)
                     .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.chrome.subtext0.color)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -61,7 +64,7 @@ struct SidebarView: View {
         .padding(.vertical, 3)
         .background(
             pane.paneId == model.focusedPaneId
-                ? Color.accentColor.opacity(0.12)
+                ? theme.chrome.accent.color.opacity(0.12)
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 4)
         )
@@ -70,10 +73,13 @@ struct SidebarView: View {
     }
 }
 
-/// Agent status as a colored dot — the whole point of the native sidebar is
-/// that this is visible at a glance.
+/// Agent status as a colored dot. Colors mirror herdr's own semantics for
+/// these chrome tokens (doc comments on `Palette` in src/app/state.rs):
+/// yellow is "working/running", red is "needs attention/blocked", green is
+/// "done/idle".
 private struct StatusDot: View {
     let status: AgentStatus
+    let chrome: ChromePalette
 
     var body: some View {
         Circle()
@@ -83,11 +89,11 @@ private struct StatusDot: View {
 
     private var color: Color {
         switch status {
-        case .working: return .green
-        case .blocked: return .orange
-        case .done: return .blue
-        case .idle: return .secondary
-        case .unknown: return .secondary.opacity(0.4)
+        case .working: return chrome.yellow.color
+        case .blocked: return chrome.red.color
+        case .done: return chrome.green.color
+        case .idle: return chrome.overlay0.color
+        case .unknown: return chrome.overlay0.color.opacity(0.4)
         }
     }
 }
