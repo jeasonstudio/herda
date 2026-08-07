@@ -16,6 +16,7 @@ public final class TerminalSession: ObservableObject {
     }
 
     @Published public private(set) var state: State = .idle
+    @Published public private(set) var theme: Theme = ThemeCatalog.default
 
     public let view: TerminalGridView
 
@@ -51,9 +52,15 @@ public final class TerminalSession: ObservableObject {
 
         let grid = view.gridSize(for: viewportSize)
 
-        Task.detached { [weak self] in
+        Task.detached { [weak self, paths] in
             do {
-                try runtime.start()
+                // "Combine both" theme sync: continue with the theme persisted
+                // by a previous launch, falling back to the default.
+                let resolvedTheme = ThemeCatalog.resolve(name: paths.existingThemeName() ?? "")
+                    ?? ThemeCatalog.default
+                await MainActor.run { self?.theme = resolvedTheme }
+
+                try runtime.start(themeName: resolvedTheme.configName)
                 try runtime.waitForSockets(timeout: 10)
                 let socket = try UnixSocket(connectingTo: runtime.paths.clientSocket.path)
                 let connection = ClientProtocolConn(socket: socket)
@@ -203,6 +210,19 @@ public final class TerminalSession: ObservableObject {
     public func reportFocus(gained: Bool) {
         guard case .running = state else { return }
         send(WireEncoder.focus(gained: gained))
+    }
+
+    /// Switches the active theme: applied to this client's own terminal/sidebar
+    /// UI immediately, and persisted into config.toml so herdr's own chrome
+    /// matches on its next launch. herdr exposes no channel to retheme a
+    /// running server, so an already-spawned embedded process keeps its current
+    /// chrome for this session — invisible in practice, since herdr's own
+    /// sidebar stays hidden throughout (see `RuntimePaths.configContents`).
+    public func setTheme(_ newTheme: Theme) {
+        theme = newTheme
+        Task.detached { [paths] in
+            try? paths.writeConfig(themeName: newTheme.configName)
+        }
     }
 
     public func resize(to size: CGSize) {
