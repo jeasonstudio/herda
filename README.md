@@ -157,6 +157,9 @@ it is accepted.
 
 ## Docs
 
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) — the working guide: toolchain, the edit
+  loop, driving the embedded server from a shell, and how rendering, input and
+  protocol changes are verified
 - [`docs/design.md`](docs/design.md) — process model, isolation scheme, protocol
   details, decision record, accepted risks
 - [`docs/plan-m1.md`](docs/plan-m1.md),
