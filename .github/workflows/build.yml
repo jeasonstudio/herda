@@ -1,0 +1,86 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-run the build without pushing — the only way to iterate on this
+  # workflow itself without landing commits on main.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macos-26's default toolchain is Xcode 26.6 (17F113), which matches the
+    # toolchain this project is developed against. Swift 6 strict-concurrency
+    # diagnostics differ between Xcode releases, so the version is pinned below
+    # rather than left to the image default: if the image drops 26.6, this
+    # should fail loudly instead of silently building with a different compiler.
+    runs-on: macos-26
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+      DERIVED_DATA: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch "$XCODE_APP"
+          xcodebuild -version
+          swift --version
+
+      # The .xcodeproj is generated, not committed, so nothing can be built
+      # until xcodegen has run.
+      - name: Install xcodegen
+        run: brew install xcodegen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # Not Scripts/test.sh: it pipes xcodebuild into `grep ... || true`, which
+      # swallows the exit code, so it always succeeds. Useless as a gate.
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project macos-client.xcodeproj \
+            -scheme HerdrPrototype \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            | xcbeautify --renderer github-actions
+
+      - name: Build (Release)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project macos-client.xcodeproj \
+            -scheme HerdrPrototype \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            | xcbeautify --renderer github-actions
+
+      # actions/upload-artifact zips its input, but loses the executable bit and
+      # symlinks inside a .app, producing a bundle that will not launch. ditto
+      # writes a macOS-correct archive first.
+      - name: Archive app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$DERIVED_DATA/Build/Products/Release/HerdrPrototype.app" \
+            HerdrPrototype.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HerdrPrototype-${{ github.sha }}
+          path: HerdrPrototype.zip
+          if-no-files-found: error
