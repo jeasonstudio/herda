@@ -84,14 +84,51 @@ public enum ChromeMetrics {
 /// 两张卡片浮起来的那个面。往黑走而不是往 text 走:明暗主题的窗口底
 /// 都该比卡片沉,这是 macOS 自己的层次(亮色浅灰底 + 白卡片,暗色近黑底
 /// + 深灰卡片)。往 text 走会让亮色主题的底比卡片亮,卡片就沉进去了。
+///
+/// 比例按明暗分档,不是一个值。实测 18 个主题(见「实测数据」):单一
+/// 0.34 在暗色主题上给出 9–18 的明度差,合适;在亮色主题上给出 69–85,
+/// 那是从 #FAFAFA 掉到中灰,卡片会像贴在深灰纸板上,而 macOS 亮色自己
+/// 只差约 13。亮色还有个结构冲突:sidebarBackground 往暗走、
+/// windowBackground 也往暗走,比例太小两者会撞 —— 0.05 时 one-light 的
+/// window 与 sidebar 只差 0.5。0.10 让亮色的 window-panel 差落在
+/// 23–25、window-sidebar 差 13–17,两边都成立。
 public var windowBackground: ThemeColor {
-    panelBackground.mixed(with: ThemeColor(0, 0, 0), 0.34)
+    // ChromePalette 自己就能判断明暗,不必绕道 Theme.isDark。
+    let isDark = panelBackground.luminance < text.luminance
+    return panelBackground.mixed(with: ThemeColor(0, 0, 0), isDark ? 0.34 : 0.10)
 }
 ```
 
 卡片描边**复用现成的 `hairline`**，不加新 token。`hairline = panelBackground.mixed(with: text, 0.16)`，暗色主题下比卡片亮、亮色主题下比卡片暗，两边都能勾出边缘。
 
 `sidebarBackground` 和 `panelBackground` 保持原样：前者是侧栏卡片底色，后者是终端卡片底色（硬约束一）。
+
+## 实测数据（已测，勿重新推导）
+
+全部 18 个主题，`ThemeColor.luminance`（Rec. 601，0–255）。`w-p` = window 与 panel 之差，`w-s` = 与 sidebar 之差，`h-p` / `h-s` = hairline 与两者之差。判据 ≥ 3。
+
+| theme | mode | panel | side | hair | win | w-p | w-s | h-p | h-s | 靠什么分离 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| catppuccin | dark | 25 | 36 | 55 | 16 | 9 | 20 | 30 | 19 | 色差 |
+| catppuccin-latte | light | 240 | 231 | 215 | 216 | 24 | 15 | 25 | 16 | 色差 |
+| **terminal** | dark | 0 | 15 | 41 | 0 | **0** | 15 | 41 | 26 | **仅描边** |
+| tokyo-night | dark | 27 | 38 | 56 | 18 | 9 | 20 | 29 | 18 | 色差 |
+| tokyo-night-day | light | 226 | 218 | 205 | 203 | 23 | 15 | 21 | 13 | 色差 |
+| dracula | dark | 42 | 54 | 75 | 28 | 14 | 26 | 33 | 21 | 色差 |
+| nord | dark | 51 | 62 | 81 | 33 | 18 | 29 | 30 | 19 | 色差 |
+| gruvbox | dark | 40 | 50 | 68 | 26 | 14 | 24 | 28 | 18 | 色差 |
+| gruvbox-light | light | 239 | 228 | 209 | 215 | 24 | 13 | 30 | 19 | 色差 |
+| one-dark | dark | 43 | 51 | 64 | 28 | 15 | 23 | 21 | 13 | 色差 |
+| one-light | light | 250 | 238 | 219 | 225 | 25 | 13 | 31 | 19 | 色差 |
+| solarized | dark | 31 | 38 | 51 | 20 | 11 | 18 | 20 | 13 | 色差 |
+| solarized-light | light | 245 | 238 | 225 | 221 | 24 | 17 | 20 | 13 | 色差 |
+| kanagawa | dark | 32 | 42 | 60 | 20 | 12 | 22 | 28 | 18 | 色差 |
+| kanagawa-lotus | light | 232 | 223 | 209 | 208 | 24 | 15 | 23 | 14 | 色差 |
+| rose-pine | dark | 25 | 37 | 57 | 16 | 9 | 21 | 32 | 20 | 色差 |
+| rose-pine-dawn | light | 244 | 234 | 217 | 220 | 24 | 14 | 27 | 17 | 色差 |
+| vesper | dark | 26 | 40 | 63 | 17 | 9 | 23 | 37 | 23 | 色差 |
+
+无硬失败。**`terminal` 是唯一走描边路径的主题**：它的 `panelBackground` 是 `TerminalPalette.ghostty.defaultBackground`，即纯黑，往黑走任何比例都不动，所以 `windowBackground` 与终端卡片完全同色。硬约束三因此不是理论边界，而是这一个具体主题的实际需求 —— 测试必须覆盖它。
 
 ## 卡片容器
 
@@ -153,14 +190,17 @@ public struct CardSurface: ViewModifier {
 
 ## 测试
 
-只加一个纯逻辑测试：遍历 `ThemeCatalog.all` 全部 18 个主题，断言每个主题下
+加进既有的 `Tests/HerdaKitTests/ChromeSurfacesTests.swift`（不新建文件——那里已经在测 `sidebarBackground` 和 `hairline` 的同类性质）。三个测试，都是纯逻辑，无需窗口：
 
-- `windowBackground` 与 `panelBackground` 之间、与 `sidebarBackground` 之间存在可辨色差；
-- 若某主题的色差不足（`panelBackground` 接近纯黑的退化情况），则 `hairline` 与两个卡片底色之间的色差达标——即描边接管了托起卡片的职责。
+**一｜每个主题都能把两张卡片从底上分离。** 遍历 `ThemeCatalog.all`，断言「色差达标」或「描边达标」至少成立一条：色差 = `windowBackground` 与 `panelBackground`、与 `sidebarBackground` 之差都够；描边 = `hairline` 与两个卡片底色之差都够。防的是「某个主题下卡片彻底看不见」。
 
-**判据用 `ThemeColor.luminance` 之差 ≥ 3**（该值已有，Rec. 601，0–255 尺度）。3 是这个尺度上肉眼可辨的下界；取更严的阈值会让本来就低对比的深色主题误报。测试断言的是「两条路径至少有一条达标」，不是两条都达标。
+**判据用 `ThemeColor.luminance` 之差 ≥ 3**（该值已有，Rec. 601，0–255 尺度）。3 是这个尺度上肉眼可辨的下界；取更严会让本就低对比的深色主题误报。
 
-防的是「某个主题下卡片彻底看不见」。这是可以在没有窗口的情况下断言的，符合既有测试的取向。
+**二｜锁住 `terminal` 主题走描边路径。** 断言它的 `windowBackground == panelBackground`（纯黑往黑走不动）**且** `hairline` 与两者色差达标。这个测试的作用是把已知的退化点写下来：将来若有人给 `windowBackground` 换算法「顺手修好」这个主题，测试会失败并迫使他确认描边路径是否还需要——而不是静默改掉硬约束三的唯一真实用例。
+
+**三｜锁住亮色主题下 window 不撞 sidebar。** 亮色主题里 `sidebarBackground` 和 `windowBackground` 都往暗走，比例调小就会撞（实测 0.05 时 `one-light` 两者只差 0.5）。断言每个亮色主题的 `windowBackground.luminance` 显著低于 `sidebarBackground.luminance`。这条防的是以后有人觉得亮色底「太重」而调小比例时，静默把层次压平。
+
+圆角是否真的裁到位、阴影是否过重，跑一次 app 看比写离屏断言快，不写。
 
 圆角是否真的裁到位、阴影是否过重，跑一次 app 看比写离屏断言快，不写。
 
@@ -196,4 +236,11 @@ public struct CardSurface: ViewModifier {
 
 ## 收尾
 
-`docs/design.md` 是设计的记录，其中描述窗口 chrome 的部分会被这次改造取代。实现完成后同步该节。CLAUDE.md 记录的另两处已知过时（`sidebar_start_collapsed`、§11 的 per-cell 绘制性能结论）本次不涉及，不动。
+`docs/design.md` 里**没有**窗口 chrome 一节（`titlebar` / `hairline` / `hiddenTitleBar` 全无命中），所以不存在"被取代的一节"。要补的是两处：
+
+- **§3 关键决策记录**：加两行——deployment target 提到 macOS 26；拒绝 Liquid Glass、保留 18 个实色主题（理由是终端正文对比度不能由壁纸决定）。
+- **§7 里程碑与验收**：加 `### M4 — macOS 26 窗口 chrome`，格式照 M3。
+
+另外记录一处**与本次无关的既有文档漂移**（发现但不在本次改动范围）：§5 的目录树写着 `Sidebar/ SidebarViewModel` 和 `Terminal/ InputTranslator`，实际是 `SidebarModel` 和 `KeyMap`，且完全没列 `Theme/` 目录。本次只把 `Theme/` 下新增的两个文件补进去，不顺手修其余漂移。
+
+CLAUDE.md 记录的另两处已知过时（`sidebar_start_collapsed`、§11 的 per-cell 绘制性能结论）本次不涉及，不动。
