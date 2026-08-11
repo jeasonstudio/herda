@@ -899,6 +899,49 @@ InputTranslator is KeyMap) predate this work and are left alone."
 
 ---
 
-## M4 验收结果
+## M4 验收结果（2026-08-11）
 
-（Task 7 执行后填写）
+全部 8 个 task 完成，`Scripts/test.sh` 通过，新增 8 个测试（`ChromeMetricsTests` 3 · `ChromeSurfacesTests` +3 · `CardSurfaceTests` 2）。
+
+### 发现的缺陷
+
+**`cardTopInset` 28 → 34：终端顶部 4pt 的点击一直被吞成拖窗口。** 这不是调参，是改造前就存在的缺陷。
+
+28 沿用 `ContentView.titlebarStrip`，那个值的来源是 macOS 15 及更早的标准 titlebar 高度。macOS 26.3 实测拖动带是 **32pt**（`contentView.bounds.height` 减 `contentLayoutRect.height`），所以改造前终端区从 y=28 起、带到 y=32，中间 4pt 的点击归窗口拖动而非终端。
+
+值得记的是**先写的那个测试没抓到它**：红绿灯净空只需 23pt（close 按钮实测 `(9, 577, 14, 14)`，内容高 600），`testCardTopInsetClearsTheTrafficLights` 在 28 下是通过的。是后补的 `testCardTopInsetClearsTheTitlebarDragStrip` 失败才暴露出来——红绿灯是视觉，拖动带才是会坏功能的那个，净空不是约束的全部。34 = 32 下限 + 2pt 防 Retina 半像素舍入。
+
+顺带一个 macOS 26 的变化：红绿灯是 14×14，不再是旧系统的 12×12。
+
+### 与计划的偏离
+
+**一｜行圆角没用 `ConcentricRectangle`，计划要求用它。** 离屏探针（`ImageRenderer`，200×200 容器 / 圆角 14 / 行内缩 8 / 行落在容器垂直中部）实测它在那个位置算出 **0** 圆角，渲染结果与 `Rectangle()` 逐像素相同——侧栏每一行都会变直角。`.concentric(minimum: .fixed(6))` 能救回来，但那时 concentric 部分永远算 0、minimum 永远接管，等于用一个不会触发的机制包装一个常量，而且**不跟随** `cardRadius`——而"以后调卡片圆角不必手算行圆角"正是 spec 采用它的唯一理由。改为 `ChromeMetrics.rowRadius = cardRadius - rowInset`，减法反而真的跟随。
+
+连带后果：`CardSurface` 的 `containerShape` 失去唯一消费者，一并删除。
+
+**二｜deployment target 26 的理由变了。** `ConcentricRectangle` 和 `containerShape` 都不用之后，代码里没有 26-only API 了；实测把 target 降到 14.0 编译通过。保留 26 因此是产品决策而非技术必需，更正后的理由已写进 `design.md` §3。
+
+**三｜三主题目视 → 18 主题离屏断言。** 计划的 Task 7 Step 3 要求切三个边界主题目视。实做时 `Terminal` 与 `Catppuccin Latte` 完成了目视，随后改为 `CardSurfaceTests` 的离屏渲染断言覆盖全部 18 个。
+
+改的原因是截屏这条路不可靠：切主题重启后窗口位置漂移，固定坐标采样落到窗口外（一次采到桌面壁纸的蓝色，另一次 `open` 后 Herda 没到前台、截到的是前台 Ghostty 里的 herdr session 而不是 Herda）。离屏渲染没有这些问题，覆盖面还从 3 个扩到 18 个，也不会把无关的工作内容截进来。
+
+**四｜`git add herda.xcodeproj`（计划 Task 2/4 步骤里）是错的**，`.gitignore` 忽略 `*.xcodeproj`，`git add` 对 ignored 路径直接报错。执行时已去掉。
+
+### 逐项结论
+
+| 验收项 | 结论 | 依据 |
+| --- | --- | --- |
+| 两卡片圆角与阴影可见 | 通过 | 目视（Catppuccin Latte、Terminal） |
+| 红绿灯浮在窗口底色上、不压内容 | 通过 | 目视 + `testCardTopInsetClearsTheTrafficLights` |
+| 终端顶部点击不触发窗口拖动 | 通过 | `testCardTopInsetClearsTheTitlebarDragStrip`；未用 GUI 点击 |
+| 卡片之间无残留竖线 | 通过 | 目视，间隙是窗口底色 |
+| 选中行圆角与卡片协调、非直角 | 通过 | 目视两主题 + concentric 探针数据 |
+| 双区拖动线与 footer 线仍在 | 通过 | 代码确认两处 `hairline` 保留 + 目视 footer |
+| 18 主题卡片均可辨 | 通过 | `testEveryThemeRendersTheCardDistinctFromTheWindow` |
+| `terminal` 主题靠描边托起 | 通过 | 目视 + `testTerminalThemeCardIsHeldUpByTheBorderAlone` |
+| 终端网格四角未被切字符 | **部分** | 数学保证（`gridInset` 6 > 4.1，有测试）+ 空终端目视；**未在满屏内容下目视** |
+
+### 未做
+
+- 满屏内容下终端四角的目视确认（上表最后一项）。
+- 文末「发现的既有问题」三条仍未修，与本次改造无关。

@@ -54,6 +54,8 @@ herdr 是一个终端 agent 运行时：后台 server 持有一批 PTY，coding 
 | 布局语义 | **server 排版 + 原生外壳** | herdr sidebar 设 `Hidden`，App 模式拿整块终端区 grid。split/zoom/焦点/prefix key 全部免费且与 TUI 行为一致，布局子系统工作量为零 |
 | 协议编解码 | 纯 Swift 手写 bincode | 单一 Xcode 工程，无 Rust 构建步骤。探针已证明约 100 行足够。自带 runtime 使版本 pin 在一起，手写的主要风险（漂移）已消除 |
 | 渲染技术 | Core Text + AppKit `NSView` | 按行合并相同属性的 cell 成 run 绘制，背景色单独填矩形（iTerm2 / Alacritty CPU 模式的标准思路）。Metal 对原型是过度工程 |
+| 窗口 chrome | **双卡片浮起 + theme 实色** | 侧栏与终端各是一张大圆角卡片，浮在 `windowBackground` 上，间距取代 hairline。表面不用 Liquid Glass：终端正文要长时间阅读，半透明会让对比度随桌面壁纸浮动，且 18 个实色主题会降格成一层 tint。形态全部自绘，不依赖 macOS 26 API |
+| deployment target | macOS 26 | 不是技术必需 —— 实测把它降到 14.0 代码照样编译（`ConcentricRectangle` 被否掉后没有 26-only API 了）。保留它是因为这是自用原型、不分发，低 target 只会引入"在旧系统上没测过"的不确定性；且以后要用 macOS 26 的新 API 时不必包 `#available` |
 | 完成度 | demo 级 | 见 §1 |
 | 仓库位置 | `herda/`，独立 git | 该目录位于 herdr 工作副本内，但**不进 herdr 的 git 历史**。herdr 侧通过本地 `.git/info/exclude` 忽略，不修改仓库内的 `.gitignore` |
 
@@ -149,6 +151,8 @@ herda/
                    WireEncoder · WireDecoder · ClientProtocolConn · ApiClient
       Terminal/    CharWidth · TerminalColor · TerminalGridView · InputTranslator
       Sidebar/     SidebarViewModel
+      Theme/       Theme · ThemeCatalog · ChromeSurfaces
+                   ChromeMetrics · CardSurface
     Herda/                         # application：仅 UI 入口
       HerdaApp.swift · ContentView.swift · SidebarView.swift
   Tests/
@@ -249,6 +253,16 @@ enum 按变体序号（varint）编码；`String` / `Vec<T>` 为 varint 长度�
 验收：所有 workspace / agent 可见 · `agent_status` 实时变化 · 点击能切焦点
 
 M1 + M2 + M3 合起来构成"最小日常可用闭环"。M1 不过关则后两个不做。
+
+### M4 — macOS 26 窗口 chrome
+
+侧栏与终端改为两张浮在 `windowBackground` 上的大圆角卡片，间距取代 hairline；行圆角由 `ChromeMetrics.rowRadius`（卡片圆角减行内缩）推导。deployment target 提到 macOS 26。表面保留 theme 实色，不用 Liquid Glass。
+
+顺带修掉一个既有缺陷：卡片顶边的净空原先是 28pt，沿用 macOS 15 的 titlebar 高度，而 macOS 26 的拖动带实测 32pt——终端顶部 4pt 的点击一直被吞成拖窗口。
+
+验收：两卡片圆角与阴影可见 · 终端顶部点击不触发窗口拖动（由拖动带高度的实测断言保证，不靠 GUI 点击） · 18 个主题在真实绘制下卡片均可辨，`terminal` 主题面色差为零、由描边托起
+
+设计见 `superpowers/specs/2026-08-11-macos26-chrome-design.md`，实现见 `plan-m4.md`。
 
 ## 8. 错误处理
 
