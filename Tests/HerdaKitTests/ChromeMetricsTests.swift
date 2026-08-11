@@ -37,6 +37,31 @@ final class ChromeMetricsTests: XCTestCase {
         )
     }
 
+    /// 红绿灯只是视觉;真正会坏功能的是拖动手势。那条 titlebar 带持有它,
+    /// 卡片顶边必须落在带的下沿之外,否则带内的终端行点击会被解释成拖窗口。
+    ///
+    /// `contentLayoutRect` 是排除 titlebar 后的内容区,它与 contentView
+    /// 的高度差就是带占用的高度 —— 比用 GUI 点击去试可靠得多。
+    func testCardTopInsetClearsTheTitlebarDragStrip() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+
+        let content = try XCTUnwrap(window.contentView)
+        let stripHeight = content.bounds.height - window.contentLayoutRect.height
+
+        XCTAssertGreaterThanOrEqual(
+            ChromeMetrics.cardTopInset,
+            stripHeight,
+            "卡片顶边落进 titlebar 的拖动带,带内的终端行点击会变成拖窗口"
+        )
+    }
+
     /// 网格不贴到圆角是「不必对 TerminalGridView 做 layer 裁剪」的前提:
     /// 圆角矩形的内接矩形在 r(1 - 1/√2) 处才脱离圆角。
     func testGridInsetClearsTheCardCorner() {
