@@ -6,8 +6,9 @@ import SwiftUI
 /// `terminal` 主题的 `panelBackground` 是纯黑,往黑走不动 —— 那个主题下
 /// 窗口底与终端卡片完全同色,把卡片托起来的只有描边和阴影。
 ///
-/// `containerShape` 是给后代读的:侧栏的行用 `ConcentricRectangle` 从这个
-/// 形状和自己的内缩推导圆角,不再手写数字。
+/// 不设 `containerShape`:唯一可能的消费者是侧栏行的 `ConcentricRectangle`,
+/// 而实测证明它对那个位置的元素算出直角,行改用了 `ChromeMetrics.rowRadius`
+/// 的减法。没有消费者的 `containerShape` 只是死代码。
 public struct CardSurface: ViewModifier {
     let fill: ThemeColor
     let theme: Theme
@@ -25,7 +26,6 @@ public struct CardSurface: ViewModifier {
         return content
             .background(fill.color)
             .clipShape(shape)
-            .containerShape(shape)
             .overlay(shape.strokeBorder(theme.chrome.hairline.color, lineWidth: 1))
             // 暗色主题的底本身就暗,0.12 的阴影在上面看不出来。
             .shadow(

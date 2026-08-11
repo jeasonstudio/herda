@@ -38,7 +38,18 @@ public enum ChromeMetrics {
     /// 多一层 mask 合成)。
     public static let gridInset: CGFloat = 6
 
-    /// 侧栏行到侧栏卡片边缘。行圆角不在这里:由 `ConcentricRectangle`
-    /// 从 `cardRadius` 和这个值推导。
+    /// 侧栏行到侧栏卡片边缘。
     public static let rowInset: CGFloat = 8
+
+    /// 行圆角,与卡片圆角同心 —— 即卡片圆角减去行的内缩。
+    ///
+    /// 不用 `ConcentricRectangle`,尽管它看起来正是为此存在的。实测
+    /// (`ImageRenderer` 离屏,200×200 容器 / 圆角 14 / 行内缩 8 / 行落在
+    /// 容器垂直中部):它对垂直方向不贴容器边的元素算出 **0** 圆角,渲染
+    /// 结果与 `Rectangle()` 逐像素相同,侧栏每一行都会变直角。
+    /// `.concentric(minimum: .fixed(6))` 能救回来,但那时 concentric 部分
+    /// 永远算 0、minimum 永远接管,等于用一个在此场景失效的机制包装一个
+    /// 固定值,而且不会随 `cardRadius` 变化 —— 采用它的唯一理由正好落空。
+    /// 减法反而真的跟随。
+    public static let rowRadius: CGFloat = cardRadius - rowInset
 }
