@@ -25,9 +25,6 @@ struct SidebarView: View {
     /// global, so an unpaired push would leave the whole window in resize.
     @State private var showingResizeCursor = false
 
-    /// The window has no titlebar of its own, so the traffic lights float over
-    /// the top of the sidebar. Nothing may be drawn under them.
-    private let trafficLightClearance: CGFloat = 28
     /// Neither section may be squeezed below this; herdr keeps three rows.
     private let minimumSectionHeight: CGFloat = 108
 
@@ -45,7 +42,8 @@ struct SidebarView: View {
             }
             footer
         }
-        .background(theme.chrome.sidebarBackground.color)
+        // 底色由 CardSurface 提供 —— 在这里再铺一层同色只会在 clipShape
+        // 之外的圆角处露出方角。
     }
 
     // MARK: Split
@@ -93,7 +91,8 @@ struct SidebarView: View {
     private var spacesSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader("SPACES") { EmptyView() }
-                .padding(.top, trafficLightClearance + 12)
+                // 红绿灯现在落在窗口底色上、卡片顶边之上,侧栏不再让位。
+                .padding(.top, 12)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(model.workspaces) { workspace in
@@ -102,7 +101,7 @@ struct SidebarView: View {
                 }
                 // Rows are inset from the sidebar edges so a selected row's
                 // rounded corners read as a shape, not a clipped band.
-                .padding(.horizontal, 8)
+                .padding(.horizontal, ChromeMetrics.rowInset)
                 .padding(.bottom, 8)
             }
         }
@@ -164,7 +163,7 @@ struct SidebarView: View {
                             agentRow(entry)
                         }
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, ChromeMetrics.rowInset)
                     .padding(.bottom, 8)
                 }
             }
@@ -379,7 +378,12 @@ private struct RowFill: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(fill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // 圆角从卡片圆角减行内缩得来,见 ChromeMetrics.rowRadius —— 那里
+            // 记着为什么不是 ConcentricRectangle。
+            .background(
+                fill,
+                in: RoundedRectangle(cornerRadius: ChromeMetrics.rowRadius, style: .continuous)
+            )
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
     }

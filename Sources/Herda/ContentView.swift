@@ -5,13 +5,11 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var session = TerminalSession()
 
-    /// The window draws no titlebar, but the strip is still there and still owns
-    /// the drag gesture, so the terminal starts below it. Anything placed inside
-    /// the strip would take the drag instead of the click.
-    private let titlebarStrip: CGFloat = 28
-
     var body: some View {
-        HStack(spacing: 0) {
+        // 两张卡片,间距而不是分隔线。顶边比其余三边深:那条 titlebar 带
+        // 仍然持有窗口拖动手势(见 ChromeMetrics.cardTopInset),红绿灯也
+        // 落在带内,浮在窗口底色而非卡片上。
+        HStack(spacing: ChromeMetrics.cardGap) {
             // Every sidebar action hands keyboard focus back: SwiftUI's Button
             // and Menu take first responder when clicked, and until it returns
             // the terminal silently ignores typing.
@@ -32,14 +30,15 @@ struct ContentView: View {
                 }
             )
             .frame(width: 224)
-
-            Rectangle()
-                .fill(session.theme.chrome.hairline.color)
-                .frame(width: 1)
+            .cardSurface(fill: session.theme.chrome.sidebarBackground, theme: session.theme)
 
             terminalArea
+                .cardSurface(fill: session.theme.chrome.panelBackground, theme: session.theme)
         }
-        .background(session.theme.chrome.panelBackground.color)
+        .padding(.top, ChromeMetrics.cardTopInset)
+        .padding(.horizontal, ChromeMetrics.cardInset)
+        .padding(.bottom, ChromeMetrics.cardInset)
+        .background(session.theme.chrome.windowBackground.color)
         .ignoresSafeArea(.container, edges: .top)
         // System-drawn chrome — menus, scrollers, spinners — reads the appearance,
         // not the theme, so the two are kept in step.
@@ -69,12 +68,11 @@ struct ContentView: View {
                 overlay
             }
         }
-        // Content is inset from the window edges rather than butting against
-        // them. The grid derives its own columns and rows from what is left.
-        .padding(.top, titlebarStrip)
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.bottom, 8)
+        // 窗口边距由 body 给,这里只让网格退出卡片的圆角:内缩超过
+        // r(1 - 1/√2) 后任何单元格都不会被圆角切到,所以不必对
+        // TerminalGridView 做 layer 裁剪。GeometryReader 拿到的是内缩后
+        // 的尺寸,session.resize 因此仍收到正确的网格大小。
+        .padding(ChromeMetrics.gridInset)
     }
 
     /// What is drawn over the grid while there is nothing to draw in it.
