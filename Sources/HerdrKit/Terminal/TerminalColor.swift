@@ -11,12 +11,19 @@ public enum TerminalColor: Equatable, Sendable {
     /// Unpacks the `u32` produced by herdr's `color_to_u32`:
     /// tag `0x00` named (low byte 0…16, 0 == Reset), `0x01` palette index,
     /// `0x02` RGB in the low three bytes.
-    public static func unpack(_ packed: UInt32) -> TerminalColor {
+    ///
+    /// Named and indexed colors resolve against `palette`'s 16 ANSI slots,
+    /// which lets the active theme recolor terminal content. Defaults to the
+    /// fixed ghostty palette (what herdr itself renders) when none is supplied.
+    public static func unpack(
+        _ packed: UInt32,
+        palette: TerminalPalette = .ghostty
+    ) -> TerminalColor {
         switch packed >> 24 {
         case 0x00:
-            return named(UInt8(truncatingIfNeeded: packed))
+            return named(UInt8(truncatingIfNeeded: packed), palette: palette)
         case 0x01:
-            return palette(UInt8(truncatingIfNeeded: packed))
+            return indexed(UInt8(truncatingIfNeeded: packed), palette: palette)
         case 0x02:
             return .rgb(
                 UInt8(truncatingIfNeeded: packed >> 16),
@@ -29,20 +36,19 @@ public enum TerminalColor: Equatable, Sendable {
     }
 
     /// ratatui named colors. Index 0 is Reset; 1…16 map to ANSI 0…15 in the
-    /// same order as `TerminalPalette.ghostty.ansi` (Black, Red, Green, Yellow,
-    /// Blue, Magenta, Cyan, Gray/white, DarkGray/bright-black, then the bright
-    /// variants). Resolving through the shared ghostty table keeps the
-    /// terminal's colors identical to what herdr actually renders.
-    private static func named(_ index: UInt8) -> TerminalColor {
+    /// order of `palette.ansi` (Black, Red, Green, Yellow, Blue, Magenta, Cyan,
+    /// Gray/white, DarkGray/bright-black, then the bright variants).
+    private static func named(_ index: UInt8, palette: TerminalPalette) -> TerminalColor {
         guard (1 ... 16).contains(index) else { return .reset }
-        let color = TerminalPalette.ghostty.ansi[Int(index) - 1]
+        let color = palette.ansi[Int(index) - 1]
         return .rgb(color.red, color.green, color.blue)
     }
 
-    /// Standard xterm 256-color palette.
-    private static func palette(_ index: UInt8) -> TerminalColor {
+    /// Standard xterm 256-color palette. Indices 0…15 follow the theme's ANSI
+    /// slots; 16…255 are the fixed xterm cube and grayscale ramp.
+    private static func indexed(_ index: UInt8, palette: TerminalPalette) -> TerminalColor {
         if index < 16 {
-            return named(index + 1)
+            return named(index + 1, palette: palette)
         }
         if index < 232 {
             let levels: [UInt8] = [0, 95, 135, 175, 215, 255]

@@ -12,22 +12,32 @@ public final class TerminalGridView: NSView {
     private let regularFont: NSFont
     private let boldFont: NSFont
     private let italicFont: NSFont
-    private let defaultForeground: NSColor
-    private let defaultBackground: NSColor
+    private var defaultForeground: NSColor
+    private var defaultBackground: NSColor
+    /// ANSI palette the current theme resolves named/indexed cell colors with.
+    private var palette: TerminalPalette
 
     public init(
         font: NSFont,
-        foreground: NSColor = TerminalPalette.ghostty.defaultForeground.nsColor,
-        background: NSColor = TerminalPalette.ghostty.defaultBackground.nsColor
+        palette: TerminalPalette = .ghostty
     ) {
         self.regularFont = font
         let manager = NSFontManager.shared
         self.boldFont = manager.convert(font, toHaveTrait: .boldFontMask)
         self.italicFont = manager.convert(font, toHaveTrait: .italicFontMask)
-        self.defaultForeground = foreground
-        self.defaultBackground = background
+        self.palette = palette
+        self.defaultForeground = palette.defaultForeground.nsColor
+        self.defaultBackground = palette.defaultBackground.nsColor
         self.cellSize = TerminalGridView.measureCell(font: font)
         super.init(frame: .zero)
+    }
+
+    /// Swaps in a new theme's terminal palette and repaints.
+    public func applyTheme(_ theme: Theme) {
+        palette = theme.terminal
+        defaultForeground = palette.defaultForeground.nsColor
+        defaultBackground = palette.defaultBackground.nsColor
+        needsDisplay = true
     }
 
     @available(*, unavailable)
@@ -175,8 +185,8 @@ public final class TerminalGridView: NSView {
         )
 
         let reversed = cell.modifier & Modifier.reversed != 0
-        var foreground = TerminalColor.unpack(cell.foreground).nsColor(default: defaultForeground)
-        var background = TerminalColor.unpack(cell.background).nsColor(default: defaultBackground)
+        var foreground = TerminalColor.unpack(cell.foreground, palette: palette).nsColor(default: defaultForeground)
+        var background = TerminalColor.unpack(cell.background, palette: palette).nsColor(default: defaultBackground)
         if reversed {
             swap(&foreground, &background)
         }

@@ -107,4 +107,69 @@ final class ThemeTests: XCTestCase {
         XCTAssertEqual(ThemeCatalog.terminal.chrome.accent, TerminalPalette.ghostty.ansi[4])
         XCTAssertEqual(ThemeCatalog.terminal.chrome.green, TerminalPalette.ghostty.ansi[2])
     }
+
+    // MARK: Per-theme terminal palette derived from chrome tokens
+
+    func testDerivedPaletteUsesChromeBackgroundAndText() {
+        let chrome = ThemeCatalog.catppuccin.chrome
+        let palette = TerminalPalette.derived(from: chrome)
+        XCTAssertEqual(palette.defaultBackground, chrome.panelBackground)
+        XCTAssertEqual(palette.defaultForeground, chrome.text)
+    }
+
+    func testDerivedPaletteMapsVividAnsiColorsToChromeTokens() {
+        let chrome = ThemeCatalog.dracula.chrome
+        let palette = TerminalPalette.derived(from: chrome)
+        XCTAssertEqual(palette.ansi[1], chrome.red)    // ANSI red
+        XCTAssertEqual(palette.ansi[2], chrome.green)  // ANSI green
+        XCTAssertEqual(palette.ansi[3], chrome.yellow) // ANSI yellow
+        XCTAssertEqual(palette.ansi[4], chrome.blue)   // ANSI blue
+        XCTAssertEqual(palette.ansi[5], chrome.mauve)  // ANSI magenta
+        XCTAssertEqual(palette.ansi[6], chrome.teal)   // ANSI cyan
+    }
+
+    func testDerivedPaletteNeutralsFollowChrome() {
+        let chrome = ThemeCatalog.catppuccin.chrome
+        let palette = TerminalPalette.derived(from: chrome)
+        XCTAssertEqual(palette.ansi[7], chrome.subtext0) // white
+        XCTAssertEqual(palette.ansi[8], chrome.overlay0) // bright black
+    }
+
+    func testDerivedBlackAndWhiteFollowLuminanceForDarkTheme() {
+        // catppuccin is dark: background darker than text, so ANSI black is the
+        // background and bright white is the text.
+        let chrome = ThemeCatalog.catppuccin.chrome
+        let palette = TerminalPalette.derived(from: chrome)
+        XCTAssertEqual(palette.ansi[0], chrome.panelBackground)
+        XCTAssertEqual(palette.ansi[15], chrome.text)
+    }
+
+    func testDerivedBlackAndWhiteFlipForLightTheme() {
+        // catppuccin-latte is light: text darker than background, so ANSI black
+        // is the text and bright white is the background — keeps content legible.
+        let chrome = ThemeCatalog.catppuccinLatte.chrome
+        let palette = TerminalPalette.derived(from: chrome)
+        XCTAssertEqual(palette.ansi[0], chrome.text)
+        XCTAssertEqual(palette.ansi[15], chrome.panelBackground)
+    }
+
+    func testThemeExposesItsDerivedTerminalPalette() {
+        XCTAssertEqual(
+            ThemeCatalog.dracula.terminal.defaultBackground,
+            ThemeCatalog.dracula.chrome.panelBackground
+        )
+    }
+
+    // MARK: unpack resolves named/indexed against a supplied palette
+
+    func testUnpackResolvesNamedColorAgainstSuppliedPalette() {
+        let palette = ThemeCatalog.dracula.terminal
+        // Named Red is wire index 2 -> ansi[1].
+        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_02, palette: palette), .rgb(palette.ansi[1].red, palette.ansi[1].green, palette.ansi[1].blue))
+    }
+
+    func testUnpackDefaultsToGhosttyPalette() {
+        // Without a palette argument the ghostty defaults are used, unchanged.
+        XCTAssertEqual(TerminalColor.unpack(0x00_00_00_02), .rgb(0xCC, 0x66, 0x66))
+    }
 }

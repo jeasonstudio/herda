@@ -26,6 +26,12 @@ public struct ThemeColor: Hashable, Sendable {
     }
 
     public var color: Color { Color(nsColor) }
+
+    /// Perceived brightness (Rec. 601). Used to orient a derived palette's
+    /// black/white anchors so light and dark themes both stay legible.
+    var luminance: Int {
+        (Int(red) * 299 + Int(green) * 587 + Int(blue) * 114) / 1000
+    }
 }
 
 /// The 16 ANSI colors and default foreground/background ghostty renders
@@ -63,6 +69,44 @@ public struct TerminalPalette: Sendable {
             ThemeColor(0xEA, 0xEA, 0xEA), // 15 bright white
         ]
     )
+
+    /// Builds a terminal palette from a theme's chrome tokens so terminal
+    /// content recolors with the theme. herdr's own terminal palette is fixed
+    /// (see `ghostty`), so this is a client-side extension: it maps each theme's
+    /// semantic UI colors onto the ANSI slots. For the ported themes this is
+    /// accurate — their authors reuse the same palette for UI and terminal.
+    ///
+    /// The six vivid slots map to the matching chrome tokens; neutrals follow
+    /// the muted text tokens; and the black/white anchors are oriented by
+    /// luminance so a light theme's "black" is its dark text (not its light
+    /// background), keeping default-colored content readable either way.
+    public static func derived(from chrome: ChromePalette) -> TerminalPalette {
+        let backgroundIsDarker = chrome.panelBackground.luminance <= chrome.text.luminance
+        let black = backgroundIsDarker ? chrome.panelBackground : chrome.text
+        let white = backgroundIsDarker ? chrome.text : chrome.panelBackground
+        return TerminalPalette(
+            defaultForeground: chrome.text,
+            defaultBackground: chrome.panelBackground,
+            ansi: [
+                black,             // 0 black
+                chrome.red,        // 1 red
+                chrome.green,      // 2 green
+                chrome.yellow,     // 3 yellow
+                chrome.blue,       // 4 blue
+                chrome.mauve,      // 5 magenta
+                chrome.teal,       // 6 cyan
+                chrome.subtext0,   // 7 white (dim)
+                chrome.overlay0,   // 8 bright black
+                chrome.red,        // 9 bright red
+                chrome.green,      // 10 bright green
+                chrome.yellow,     // 11 bright yellow
+                chrome.blue,       // 12 bright blue
+                chrome.mauve,      // 13 bright magenta
+                chrome.teal,       // 14 bright cyan
+                white,             // 15 bright white
+            ]
+        )
+    }
 }
 
 /// herdr's UI-chrome palette — the tokens that theme herdr's own tab bar,
@@ -127,6 +171,10 @@ public struct Theme: Hashable, Sendable {
         self.displayName = displayName
         self.chrome = chrome
     }
+
+    /// The terminal palette to render this theme's terminal content with,
+    /// derived from its chrome tokens (see `TerminalPalette.derived`).
+    public var terminal: TerminalPalette { .derived(from: chrome) }
 }
 
 extension Theme {

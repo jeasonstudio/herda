@@ -58,7 +58,10 @@ public final class TerminalSession: ObservableObject {
                 // by a previous launch, falling back to the default.
                 let resolvedTheme = ThemeCatalog.resolve(name: paths.existingThemeName() ?? "")
                     ?? ThemeCatalog.default
-                await MainActor.run { self?.theme = resolvedTheme }
+                await MainActor.run {
+                    self?.theme = resolvedTheme
+                    self?.view.applyTheme(resolvedTheme)
+                }
 
                 try runtime.start(themeName: resolvedTheme.configName)
                 try runtime.waitForSockets(timeout: 10)
@@ -220,6 +223,7 @@ public final class TerminalSession: ObservableObject {
     /// sidebar stays hidden throughout (see `RuntimePaths.configContents`).
     public func setTheme(_ newTheme: Theme) {
         theme = newTheme
+        view.applyTheme(newTheme)
         Task.detached { [paths] in
             try? paths.writeConfig(themeName: newTheme.configName)
         }
