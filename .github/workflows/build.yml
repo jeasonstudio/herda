@@ -46,8 +46,11 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # Not Scripts/test.sh: it pipes xcodebuild into `grep ... || true`, which
-      # swallows the exit code, so it always succeeds. Useless as a gate.
+      # Not Scripts/test.sh. It gates correctly — it reads xcodebuild's status
+      # out of PIPESTATUS, so a failing suite exits 65 — but its grep keeps only
+      # the lines worth reading in a terminal. xcbeautify's github-actions
+      # renderer instead annotates a failure onto the diff, which is the whole
+      # value of running it here.
       - name: Test
         run: |
           set -o pipefail
