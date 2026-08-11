@@ -28,6 +28,14 @@ final class RuntimePathsTests: XCTestCase {
         XCTAssertTrue(toml.contains("[ui]"))
     }
 
+    func testConfigContentsHidesTheTabRowForSingleTabWorkspaces() {
+        // The native sidebar lists the same workspaces herdr's tab row did.
+        XCTAssertTrue(
+            paths.configContents(themeName: "catppuccin")
+                .contains("hide_tab_bar_when_single_tab = true")
+        )
+    }
+
     func testConfigContentsDisablesOnboarding() {
         // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
         // overlay, and it takes over input handling before anything else.

@@ -15,6 +15,23 @@ public enum AgentStatus: String, Decodable, Sendable {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = AgentStatus(rawValue: raw) ?? .unknown
     }
+
+    /// How much this state needs a person, mirroring herdr's own
+    /// `pane_attention_priority` (src/workspace/aggregate.rs).
+    ///
+    /// `done` outranking `working` is the part worth stating: an agent that has
+    /// finished and is waiting to be read is holding up the user, while one that
+    /// is still working is not. herdr splits the server's single idle state into
+    /// these two on a `seen` flag, which the API surfaces as `done` and `idle`.
+    public var attentionPriority: Int {
+        switch self {
+        case .blocked: return 4
+        case .done: return 3
+        case .working: return 2
+        case .idle: return 1
+        case .unknown: return 0
+        }
+    }
 }
 
 public struct WorkspaceInfo: Decodable, Identifiable, Sendable {
@@ -36,7 +53,9 @@ public struct PaneInfo: Decodable, Identifiable, Sendable {
     public let tabId: String
     public let focused: Bool
     public let cwd: String
-    public let agentStatus: AgentStatus
+    /// Mutable because `pane_agent_status_changed` reports a new status on its
+    /// own, without a pane object to replace this one with.
+    public var agentStatus: AgentStatus
     /// Absent on panes that are not running a recognised agent.
     public let agent: String?
     public let terminalTitleStripped: String?

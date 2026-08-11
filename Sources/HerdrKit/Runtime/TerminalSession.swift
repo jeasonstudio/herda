@@ -27,6 +27,7 @@ public final class TerminalSession: ObservableObject {
     private var connection: ClientProtocolConn?
     private var api: ApiClient?
     private var eventPump: ApiClient.EventPump?
+    private var statusPoll: Task<Void, Never>?
 
     public init(
         paths: RuntimePaths = .defaultLocation(),
@@ -136,6 +137,35 @@ public final class TerminalSession: ObservableObject {
                 )
             } catch {
                 await MainActor.run { self?.log("api channel failed: \(error)") }
+            }
+        }
+
+        startStatusPolling(api)
+    }
+
+    /// Keeps agent status current. Deliberately a poll: the API has no
+    /// session-wide agent-status event, only a per-pane subscription that cannot
+    /// be extended once a connection's subscription set has started (see
+    /// `SidebarModel.mergeStatuses`). The interval is well under how long an
+    /// agent stays in any one state, and a missed tick self-heals on the next.
+    private func startStatusPolling(_ api: ApiClient) {
+        statusPoll?.cancel()
+        statusPoll = Task.detached { [weak self] in
+            var reportedFailure = false
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(1500))
+                guard !Task.isCancelled else { return }
+                do {
+                    let panes = try api.snapshot().panes
+                    reportedFailure = false
+                    await MainActor.run { self?.sidebar.mergeStatuses(from: panes) }
+                } catch {
+                    // Logged once per outage: at this interval, logging every
+                    // failure would bury everything else in the file.
+                    guard !reportedFailure else { continue }
+                    reportedFailure = true
+                    await MainActor.run { self?.log("status poll failed: \(error)") }
+                }
             }
         }
     }
@@ -248,6 +278,8 @@ public final class TerminalSession: ObservableObject {
             try? connection.send(WireEncoder.detach())
             connection.stop()
         }
+        statusPoll?.cancel()
+        statusPoll = nil
         eventPump?.stop()
         eventPump = nil
         api = nil
