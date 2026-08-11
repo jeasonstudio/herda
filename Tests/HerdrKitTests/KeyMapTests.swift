@@ -114,4 +114,121 @@ final class KeyMapTests: XCTestCase {
             .ignore
         )
     }
+
+    // MARK: - Composition
+
+    /// Return, backspace, escape and the arrows all mean something to an input
+    /// method mid-composition — commit, delete a syllable, cancel, page the
+    /// candidate list. Consulting the special-key table first is what makes CJK
+    /// input unusable: enter submits a half-finished line and backspace deletes
+    /// pane content instead of the phrase being typed.
+    func testCompositionClaimsTheKeysAnInputMethodNeeds() {
+        let cases: [(UInt16, String?)] = [
+            (36, "\r"),   // Return — commit
+            (51, nil),    // Backspace — delete a syllable
+            (53, nil),    // Escape — cancel
+            (126, nil),   // Up — previous candidate page
+            (125, nil),   // Down — next candidate page
+            (123, nil),   // Left — move within the phrase
+            (124, nil),   // Right
+            (48, "\t"),   // Tab
+        ]
+        for (keyCode, characters) in cases {
+            XCTAssertEqual(
+                KeyMap.decide(
+                    keyCode: keyCode,
+                    charactersIgnoringModifiers: characters,
+                    flags: [],
+                    composing: true
+                ),
+                .inputMethod,
+                "key code \(keyCode) must reach the input method while composing"
+            )
+        }
+    }
+
+    func testSameKeysGoToThePaneWhenNotComposing() {
+        XCTAssertEqual(
+            KeyMap.decide(keyCode: 36, charactersIgnoringModifiers: "\r", flags: [], composing: false),
+            .send(.enter, [])
+        )
+        XCTAssertEqual(
+            KeyMap.decide(keyCode: 51, charactersIgnoringModifiers: nil, flags: [], composing: false),
+            .send(.backspace, [])
+        )
+    }
+
+    /// A phrase half typed must not stop ctrl+c from interrupting a process.
+    func testControlStillBypassesTheInputMethodWhileComposing() {
+        XCTAssertEqual(
+            KeyMap.decide(
+                keyCode: 8,
+                charactersIgnoringModifiers: "c",
+                flags: .control,
+                composing: true
+            ),
+            .send(.character("c"), [.control])
+        )
+    }
+
+    func testCommandStillBypassesTheInputMethodWhileComposing() {
+        XCTAssertEqual(
+            KeyMap.decide(
+                keyCode: 8,
+                charactersIgnoringModifiers: "c",
+                flags: .command,
+                composing: true
+            ),
+            .send(.character("c"), [.command])
+        )
+    }
+
+    func testCompositionDefaultsToOff() {
+        XCTAssertEqual(
+            KeyMap.decide(keyCode: 36, charactersIgnoringModifiers: "\r", flags: []),
+            .send(.enter, [])
+        )
+    }
+
+    /// An input method often answers a key by turning it into one of these and
+    /// reporting success, so the translation back is what keeps the key alive.
+    func testStandardEditingCommandsMapBackToWireKeys() {
+        XCTAssertEqual(
+            KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.insertNewline(_:))),
+            .enter
+        )
+        XCTAssertEqual(
+            KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.deleteBackward(_:))),
+            .backspace
+        )
+        XCTAssertEqual(
+            KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.deleteForward(_:))),
+            .delete
+        )
+        XCTAssertEqual(KeyMap.key(forCommand: #selector(NSResponder.cancelOperation(_:))), .escape)
+        XCTAssertEqual(KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.insertTab(_:))), .tab)
+        XCTAssertEqual(KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.moveUp(_:))), .up)
+        XCTAssertEqual(
+            KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.moveToEndOfLine(_:))),
+            .end
+        )
+    }
+
+    /// Commands with no terminal equivalent must stay unmapped so the view can
+    /// swallow them instead of sending something wrong.
+    func testUnrelatedCommandsHaveNoWireKey() {
+        XCTAssertNil(KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.selectAll(_:))))
+        XCTAssertNil(KeyMap.key(forCommand: #selector(NSStandardKeyBindingResponding.centerSelectionInVisibleArea(_:))))
+    }
+
+    func testCandidateSelectionDigitsReachTheInputMethod() {
+        XCTAssertEqual(
+            KeyMap.decide(keyCode: 18, charactersIgnoringModifiers: "1", flags: [], composing: true),
+            .inputMethod
+        )
+        XCTAssertEqual(
+            KeyMap.decide(keyCode: 49, charactersIgnoringModifiers: " ", flags: [], composing: true),
+            .inputMethod
+        )
+    }
 }

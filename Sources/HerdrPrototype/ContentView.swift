@@ -12,12 +12,24 @@ struct ContentView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // Every sidebar action hands keyboard focus back: SwiftUI's Button
+            // and Menu take first responder when clicked, and until it returns
+            // the terminal silently ignores typing.
             SidebarView(
                 model: session.sidebar,
                 theme: session.theme,
-                onSelectWorkspace: { session.focusWorkspace($0) },
-                onSelectPane: { session.focusPane($0) },
-                onSelectTheme: { session.setTheme($0) }
+                onSelectWorkspace: {
+                    session.focusWorkspace($0)
+                    session.focusTerminal()
+                },
+                onSelectPane: {
+                    session.focusPane($0)
+                    session.focusTerminal()
+                },
+                onSelectTheme: {
+                    session.setTheme($0)
+                    session.focusTerminal()
+                }
             )
             .frame(width: 224)
 

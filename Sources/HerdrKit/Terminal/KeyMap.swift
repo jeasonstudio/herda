@@ -58,19 +58,67 @@ public enum KeyMap {
         }
     }
 
+    /// `composing` is whether the input method currently holds marked text.
+    ///
+    /// It has to be consulted before the special-key table, not after. Return,
+    /// backspace, escape and the arrows all mean something to an input method
+    /// mid-composition — commit, delete a syllable, cancel, page the candidate
+    /// list — and sending them straight to the pane instead is what makes CJK
+    /// input unusable: enter submits a half-finished line, backspace deletes
+    /// pane content rather than the phrase being typed.
+    ///
+    /// ctrl and cmd still bypass composition. ctrl+c has to be able to interrupt
+    /// a runaway process even with a phrase half typed.
+    /// The wire key a standard AppKit editing command stands for.
+    ///
+    /// An input method does not always answer a key by composing or by declining
+    /// it. Frequently it "handles" it by translating it into one of these
+    /// commands and reporting success — return becomes `insertNewline:`,
+    /// backspace becomes `deleteBackward:`. A terminal that only watches
+    /// `handleEvent`'s return value therefore loses those keys entirely.
+    ///
+    /// Modifiers are not represented: `doCommand(by:)` does not carry them, and
+    /// the modified variants are separate selectors that a pane has no key for.
+    public static func key(forCommand selector: Selector) -> WireEncoder.Key? {
+        commands[selector]
+    }
+
+    private static let commands: [Selector: WireEncoder.Key] = [
+        #selector(NSStandardKeyBindingResponding.insertNewline(_:)): .enter,
+        #selector(NSStandardKeyBindingResponding.insertLineBreak(_:)): .enter,
+        #selector(NSStandardKeyBindingResponding.insertTab(_:)): .tab,
+        #selector(NSStandardKeyBindingResponding.insertBacktab(_:)): .backTab,
+        #selector(NSStandardKeyBindingResponding.deleteBackward(_:)): .backspace,
+        #selector(NSStandardKeyBindingResponding.deleteForward(_:)): .delete,
+        #selector(NSResponder.cancelOperation(_:)): .escape,
+        #selector(NSStandardKeyBindingResponding.moveLeft(_:)): .left,
+        #selector(NSStandardKeyBindingResponding.moveRight(_:)): .right,
+        #selector(NSStandardKeyBindingResponding.moveUp(_:)): .up,
+        #selector(NSStandardKeyBindingResponding.moveDown(_:)): .down,
+        #selector(NSStandardKeyBindingResponding.moveToBeginningOfLine(_:)): .home,
+        #selector(NSStandardKeyBindingResponding.moveToEndOfLine(_:)): .end,
+        #selector(NSStandardKeyBindingResponding.scrollPageUp(_:)): .pageUp,
+        #selector(NSStandardKeyBindingResponding.scrollPageDown(_:)): .pageDown,
+    ]
+
     public static func decide(
         keyCode: UInt16,
         charactersIgnoringModifiers: String?,
-        flags: NSEvent.ModifierFlags
+        flags: NSEvent.ModifierFlags,
+        composing: Bool = false
     ) -> Decision {
         let mods = modifiers(from: flags)
+        let isCommandLike = flags.contains(.control) || flags.contains(.command)
+
+        if composing, !isCommandLike {
+            return .inputMethod
+        }
 
         if let special = specialKey(forKeyCode: keyCode) {
             return .send(special, mods)
         }
 
         // ctrl and cmd combinations are commands, never composable text.
-        let isCommandLike = flags.contains(.control) || flags.contains(.command)
         if isCommandLike,
            let characters = charactersIgnoringModifiers,
            let character = characters.first

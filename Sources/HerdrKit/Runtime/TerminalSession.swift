@@ -28,13 +28,15 @@ public final class TerminalSession: ObservableObject {
     private var api: ApiClient?
     private var eventPump: ApiClient.EventPump?
     private var statusPoll: Task<Void, Never>?
+    private var resizeDebounce: Task<Void, Never>?
+    private var lastReportedGrid: (columns: UInt16, rows: UInt16)?
 
     public init(
         paths: RuntimePaths = .defaultLocation(),
-        font: NSFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        font: TerminalFont = TerminalFont()
     ) {
         self.paths = paths
-        self.view = TerminalGridView(font: font)
+        self.view = TerminalGridView(terminalFont: font)
     }
 
     public func start(viewportSize: CGSize) {
@@ -52,6 +54,8 @@ public final class TerminalSession: ObservableObject {
         self.runtime = runtime
 
         let grid = view.gridSize(for: viewportSize)
+        let cell = view.cellSize
+        lastReportedGrid = grid
 
         Task.detached { [weak self, paths] in
             do {
@@ -68,11 +72,14 @@ public final class TerminalSession: ObservableObject {
                 try runtime.waitForSockets(timeout: 10)
                 let socket = try UnixSocket(connectingTo: runtime.paths.clientSocket.path)
                 let connection = ClientProtocolConn(socket: socket)
+                // The real cell metrics, not a guess: the server passes these
+                // through as the pixel size of a cell, which is what kitty
+                // graphics and pixel-resolution mouse reporting are scaled by.
                 try connection.handshake(
                     columns: grid.columns,
                     rows: grid.rows,
-                    cellWidth: 8,
-                    cellHeight: 16
+                    cellWidth: UInt32(cell.width),
+                    cellHeight: UInt32(cell.height)
                 )
                 await self?.attach(connection)
             } catch {
@@ -259,17 +266,40 @@ public final class TerminalSession: ObservableObject {
         }
     }
 
+    /// A live window resize emits a geometry change per frame, and most of them
+    /// land on the same grid size. Coalescing them keeps the server from
+    /// re-laying out the whole session dozens of times per drag.
     public func resize(to size: CGSize) {
-        guard case .running = state, let connection else { return }
+        guard case .running = state else { return }
         let grid = view.gridSize(for: size)
+        if let last = lastReportedGrid, last == grid { return }
+
+        resizeDebounce?.cancel()
+        resizeDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            self?.sendResize(grid)
+        }
+    }
+
+    private func sendResize(_ grid: (columns: UInt16, rows: UInt16)) {
+        guard let connection else { return }
+        lastReportedGrid = grid
+        let cell = view.cellSize
         try? connection.send(
             WireEncoder.resize(
                 columns: grid.columns,
                 rows: grid.rows,
-                cellWidth: 8,
-                cellHeight: 16
+                cellWidth: UInt32(cell.width),
+                cellHeight: UInt32(cell.height)
             )
         )
+    }
+
+    /// Returns keyboard focus to the terminal. The sidebar's SwiftUI controls
+    /// take first responder when clicked and never hand it back.
+    public func focusTerminal() {
+        view.window?.makeFirstResponder(view)
     }
 
     public func shutdown() {
@@ -280,6 +310,9 @@ public final class TerminalSession: ObservableObject {
         }
         statusPoll?.cancel()
         statusPoll = nil
+        resizeDebounce?.cancel()
+        resizeDebounce = nil
+        lastReportedGrid = nil
         eventPump?.stop()
         eventPump = nil
         api = nil
