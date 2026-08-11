@@ -56,8 +56,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild test \
-            -project macos-client.xcodeproj \
-            -scheme HerdrPrototype \
+            -project herda.xcodeproj \
+            -scheme Herda \
             -configuration Debug \
             -destination 'platform=macOS' \
             -derivedDataPath "$DERIVED_DATA" \
@@ -67,8 +67,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build \
-            -project macos-client.xcodeproj \
-            -scheme HerdrPrototype \
+            -project herda.xcodeproj \
+            -scheme Herda \
             -configuration Release \
             -destination 'platform=macOS' \
             -derivedDataPath "$DERIVED_DATA" \
@@ -80,21 +80,21 @@ jobs:
       - name: Archive app
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "$DERIVED_DATA/Build/Products/Release/HerdrPrototype.app" \
-            HerdrPrototype.zip
+            "$DERIVED_DATA/Build/Products/Release/Herda.app" \
+            Herda.zip
 
       # Kept alongside the release below, and not redundant with it: the release
       # only ever holds the newest build, while these stay per-commit for 90
       # days, which is what you want when bisecting a regression.
       - uses: actions/upload-artifact@v4
         with:
-          name: HerdrPrototype-${{ github.sha }}
-          path: HerdrPrototype.zip
+          name: Herda-${{ github.sha }}
+          path: Herda.zip
           if-no-files-found: error
 
       # One rolling `nightly` release rather than one per commit: the tag list
       # stays clean and the download URL is stable, so docs can link
-      # .../releases/download/nightly/HerdrPrototype.zip. The cost is that
+      # .../releases/download/nightly/Herda.zip. The cost is that
       # older nightlies are gone — recover those from the artifacts above.
       #
       # Marked --prerelease so it never becomes the repo's "Latest" release.
@@ -115,7 +115,7 @@ jobs:
               "${GITHUB_SHA:0:7}" "$(git log -1 --pretty=%s)"
             printf 'Ad-hoc signed and not notarized, so Gatekeeper refuses to open it after\n'
             printf 'download. Clear the quarantine attribute first:\n\n'
-            printf '    xattr -dr com.apple.quarantine HerdrPrototype.app\n\n'
+            printf '    xattr -dr com.apple.quarantine Herda.app\n\n'
             printf 'Launching it also needs a `herdr` binary, looked up in the app bundle,\n'
             printf 'then PATH, then ~/.local/bin/herdr.\n'
           } > notes.md
@@ -131,4 +131,4 @@ jobs:
             --prerelease \
             --title "nightly $(date -u +%Y-%m-%d) (${GITHUB_SHA:0:7})" \
             --notes-file notes.md \
-            HerdrPrototype.zip
+            Herda.zip

@@ -50,7 +50,7 @@ the layout.
 
 The wire protocol is implemented in Swift by hand — bincode varint framing across
 six small files — rather than bound to Rust, which keeps the build to a single
-Xcode project. The protocol version is pinned in `HerdrKit.swift` and checked
+Xcode project. The protocol version is pinned in `HerdaKit.swift` and checked
 strictly at handshake, with no compatibility shims.
 
 ## Requirements
@@ -72,18 +72,15 @@ private-use glyphs, braille and block elements, with real bold and italic faces.
 
 ```bash
 xcodegen generate
-xcodebuild -project macos-client.xcodeproj -scheme HerdrPrototype \
+xcodebuild -project herda.xcodeproj -scheme Herda \
   -configuration Debug -destination 'platform=macOS' -derivedDataPath build build
-open build/Build/Products/Debug/HerdrPrototype.app
+open build/Build/Products/Debug/Herda.app
 ```
-
-The scheme, product and bundle identifier still carry the prototype's original
-name; renaming them is pending.
 
 Runtime state is fully isolated from any herdr session you already have running.
 The embedded server gets its own socket, config and state directories under
-`~/Library/Application Support/dev.herdr.macos-client-prototype/runtime`, and every
-inherited `HERDR_*` variable is stripped before it is spawned.
+`~/Library/Application Support/app.herda/runtime`, and every inherited
+`HERDR_*` variable is stripped before it is spawned.
 
 ## Tests
 
@@ -128,15 +125,15 @@ of the details are load-bearing:
 ```
 project.yml                  xcodegen input
 Sources/
-  HerdrKit/                  static library — all logic, no UI
+  HerdaKit/                  static library — all logic, no UI
     Protocol/                varint, framing, wire codec, sockets, JSON API
     Runtime/                 server supervision, isolation, session startup
     Terminal/                grid view, font metrics, glyph cache, block geometry,
                              key map, composition layout, scroll accumulation
     Theme/                   herdr's 18 built-in palettes
     Sidebar/                 workspace and agent state
-  HerdrPrototype/            SwiftUI app, window, sidebar view
-Tests/HerdrKitTests/         no host app required
+  Herda/                     SwiftUI app, window, sidebar view
+Tests/HerdaKitTests/         no host app required
 docs/                        design of record and per-milestone plans
 ```
 

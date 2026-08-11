@@ -55,7 +55,7 @@ herdr 是一个终端 agent 运行时：后台 server 持有一批 PTY，coding 
 | 协议编解码 | 纯 Swift 手写 bincode | 单一 Xcode 工程，无 Rust 构建步骤。探针已证明约 100 行足够。自带 runtime 使版本 pin 在一起，手写的主要风险（漂移）已消除 |
 | 渲染技术 | Core Text + AppKit `NSView` | 按行合并相同属性的 cell 成 run 绘制，背景色单独填矩形（iTerm2 / Alacritty CPU 模式的标准思路）。Metal 对原型是过度工程 |
 | 完成度 | demo 级 | 见 §1 |
-| 仓库位置 | `macos-client/`，独立 git | 该目录位于 herdr 工作副本内，但**不进 herdr 的 git 历史**。herdr 侧通过本地 `.git/info/exclude` 忽略，不修改仓库内的 `.gitignore` |
+| 仓库位置 | `herda/`，独立 git | 该目录位于 herdr 工作副本内，但**不进 herdr 的 git 历史**。herdr 侧通过本地 `.git/info/exclude` 忽略，不修改仓库内的 `.gitignore` |
 
 关于最后一项：本机认证账号 `jeasonstudio` 不在 `.github/MAINTAINERS`（`ogulcancelik` / `akbash-bot` / `kangal-bot`）中，remote 为 canonical `herdrdev/herdr`。按仓库自身规则属 external contributor，因此本项目保持为独立仓库，不向 herdr 提交或推送。
 
@@ -86,7 +86,7 @@ XDG_CONFIG_HOME   = <Support>/runtime/config       → config_dir() = <Support>/
 XDG_STATE_HOME    = <Support>/runtime/state
 ```
 
-其中 `<Support>` = `~/Library/Application Support/dev.herdr.macos-client-prototype`。依据：`src/config/io.rs:29` 的 `config_dir()`、`src/server/socket_paths.rs` 的 socket 解析。
+其中 `<Support>` = `~/Library/Application Support/app.herda`。依据：`src/config/io.rs:29` 的 `config_dir()`、`src/server/socket_paths.rs` 的 socket 解析。
 
 **用 `HERDR_SOCKET_PATH` 而非 `HERDR_SESSION`。** 前者优先级最高，且 client socket 由它按「在 `.sock` 前插入 `-client`」的规则派生（`herdr.sock` → `herdr-client.sock`），两个路径因此完全确定，无需推断具名 session 的路径规则。该派生规则已由探针实证。注意两者不能混用：`client_socket_path()` 在检测到显式 session 时会走 session 分支并忽略 `HERDR_SOCKET_PATH`。
 
@@ -140,24 +140,24 @@ toggle_sidebar = "ctrl+alt+f20"
 工程由 `xcodegen` 从 `project.yml` 生成（本机已装），产出标准 `.xcodeproj`。三个 target：
 
 ```
-macos-client/
+herda/
   project.yml                      # xcodegen 输入，.xcodeproj 由它生成
   Sources/
-    HerdrKit/                      # 静态库：全部逻辑
+    HerdaKit/                      # 静态库：全部逻辑
       Runtime/     HerdrRuntime · RuntimePaths
       Protocol/    Varint · ByteReader · Framing · WireTypes
                    WireEncoder · WireDecoder · ClientProtocolConn · ApiClient
       Terminal/    CharWidth · TerminalColor · TerminalGridView · InputTranslator
       Sidebar/     SidebarViewModel
-    HerdrPrototype/                # application：仅 UI 入口
-      HerdrPrototypeApp.swift · ContentView.swift · SidebarView.swift
+    Herda/                         # application：仅 UI 入口
+      HerdaApp.swift · ContentView.swift · SidebarView.swift
   Tests/
-    HerdrKitTests/                 # 只依赖 framework，不需要 host app
+    HerdaKitTests/                 # 只依赖 framework，不需要 host app
   docs/
     design.md · plan-m1.md
 ```
 
-**逻辑必须放在独立库而非 app target。** 若单元测试以 app 为 test host，运行测试会启动 app，连带执行启动序列并 spawn 一个真实的 herdr server——这会让测试产生副作用且变慢。独立库使 `HerdrKitTests` 无需 host app。
+**逻辑必须放在独立库而非 app target。** 若单元测试以 app 为 test host，运行测试会启动 app，连带执行启动序列并 spawn 一个真实的 herdr server——这会让测试产生副作用且变慢。独立库使 `HerdaKitTests` 无需 host app。
 
 该库须是**静态库**而非 framework：framework 被嵌入 xctest bundle 时 codesign 会以 `bundle format unrecognized, invalid, or unsuitable` 失败（实测）。另外 xcodegen 不会为 test bundle 生成 Info.plist，需显式设 `GENERATE_INFOPLIST_FILE: YES`，否则签名步骤直接报错。
 

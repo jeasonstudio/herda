@@ -36,18 +36,17 @@ resolve within the same family — rather than family-specific constants.
 
 ```bash
 xcodegen generate
-xcodebuild -project macos-client.xcodeproj -scheme HerdrPrototype \
+xcodebuild -project herda.xcodeproj -scheme Herda \
   -configuration Debug -destination 'platform=macOS' -derivedDataPath build build
-open build/Build/Products/Debug/HerdrPrototype.app
+open build/Build/Products/Debug/Herda.app
 ```
 
-Or `open macos-client.xcodeproj` and ⌘R. The scheme builds `HerdrKitTests` only
+Or `open herda.xcodeproj` and ⌘R. The scheme builds `HerdaKitTests` only
 for the test action, not for running, so ⌘R will not tell you the test target
 stopped compiling — ⌘U will.
 
-The scheme, product and bundle identifier still carry the prototype's original
-name (`HerdrPrototype`, `dev.herdr.macos-client-prototype`). Renaming them is
-pending; until then, that identifier is what the runtime directory is keyed on.
+The scheme and product are both `Herda`; the bundle identifier is `app.herda`,
+which is what the runtime directory is keyed on.
 
 ## The edit loop
 
@@ -65,6 +64,42 @@ Symptoms of skipping it: your new type is "cannot find in scope" from a file
 that visibly sits next to it, or a file you deleted is still a build input and
 cannot be found.
 
+### Rebuild and relaunch on every change
+
+```bash
+Scripts/run.sh            # generate, build, launch
+Scripts/run.sh --watch    # the same, then repeat it on every change
+Scripts/run.sh --reset    # discard the embedded server's session first
+```
+
+`--watch` polls `Sources` and `project.yml` once a second and runs the whole
+loop when anything changes, so it also covers the mistake above. About seven
+seconds for an incremental change.
+
+There is no in-place hot reload; this is a restart. It costs much less than that
+sounds like, because the terminal session does not live in the app. The embedded
+server is a separate process, and the script kills the app rather than quitting
+it: quitting runs the shutdown path, which stops the server and takes every PTY
+with it, while killing leaves it running and the relaunched app reconnects to
+the same one. The server keeps its pid across a reload and the agents never
+notice.
+
+A failing build prints its errors and leaves the running app alone, so a typo
+costs you nothing; the full log is `build/last-build.log`, and the app's own
+stderr is `build/last-run.log`.
+
+Two details in there are worth knowing if you edit the script. It executes the
+binary directly instead of using `open`, which becomes unreliable across rapid
+kill-and-relaunch cycles and starts refusing with
+`_LSOpenURLsWithCompletionHandler() failed with error -600`. And it clears
+`CLAUDE_CODE_CHILD_SESSION` and `CLAUDE_CODE_SESSION_ID` from the environment
+first: the app strips inherited `HERDR_*` variables itself but nothing else, so
+launching it from inside a Claude Code session otherwise passes those markers
+down to the agents in the panes, which respond by turning off transcript saving.
+
+`--reset` kills only the process holding the prototype's own API socket, found
+by path, so a herdr session of your own is never a candidate.
+
 ### Run the tests
 
 ```bash
@@ -77,8 +112,8 @@ including the build. No PTY, no window, no server — see [Testing](#testing).
 The script forwards extra arguments to `xcodebuild`, so you can narrow it:
 
 ```bash
-Scripts/test.sh -only-testing:HerdrKitTests/WireDecoderTests
-Scripts/test.sh -only-testing:HerdrKitTests/KeyMapTests/testMapsSpecialKeyCodes
+Scripts/test.sh -only-testing:HerdaKitTests/WireDecoderTests
+Scripts/test.sh -only-testing:HerdaKitTests/KeyMapTests/testMapsSpecialKeyCodes
 ```
 
 The script filters `xcodebuild`'s noise through `grep`, but `grep` exits 1 when
@@ -90,28 +125,28 @@ assignment; bash resets the array on the next command.
 
 ## Where code goes
 
-**All logic belongs in the `HerdrKit` target.** The app target is the UI entry
+**All logic belongs in the `HerdaKit` target.** The app target is the UI entry
 point and nothing else. This is not a style preference:
 
 - If the tests used the app as their host, running them would execute the
   startup sequence and spawn a real `herdr server`.
-- `HerdrKit` is a static library rather than a framework because embedding a
+- `HerdaKit` is a static library rather than a framework because embedding a
   framework inside an xctest bundle fails codesigning with
   `bundle format unrecognized`.
 
 So when something in the view turns out to be worth testing, extract it into
-`HerdrKit` rather than reaching for UI automation. `MarkedText`,
+`HerdaKit` rather than reaching for UI automation. `MarkedText`,
 `ScrollAccumulator` and `CellGeometry` all exist because of that move.
 
 ```
-Sources/HerdrKit/Protocol/    varint, framing, wire codec, sockets, JSON API
-Sources/HerdrKit/Runtime/     locating, spawning and isolating the server;
+Sources/HerdaKit/Protocol/    varint, framing, wire codec, sockets, JSON API
+Sources/HerdaKit/Runtime/     locating, spawning and isolating the server;
                               TerminalSession drives the startup sequence
-Sources/HerdrKit/Terminal/    grid view, font metrics, glyph cache, block
+Sources/HerdaKit/Terminal/    grid view, font metrics, glyph cache, block
                               geometry, key map, composition layout
-Sources/HerdrKit/Theme/       herdr's 18 built-in palettes
-Sources/HerdrKit/Sidebar/     workspace and agent state
-Sources/HerdrPrototype/       SwiftUI app, window, sidebar view
+Sources/HerdaKit/Theme/       herdr's 18 built-in palettes
+Sources/HerdaKit/Sidebar/     workspace and agent state
+Sources/Herda/                SwiftUI app, window, sidebar view
 ```
 
 Swift conventions: no force unwraps or `try!` in production code; views stay
@@ -132,7 +167,7 @@ your own server. `RuntimePaths.environment(basedOn:)` owns this.
 To talk to that server from a shell while the app is running:
 
 ```bash
-R="$HOME/Library/Application Support/dev.herdr.macos-client-prototype/runtime"
+R="$HOME/Library/Application Support/app.herda/runtime"
 export HERDR_SOCKET_PATH="$R/herdr.sock" XDG_CONFIG_HOME="$R/config" XDG_STATE_HOME="$R/state"
 env -u HERDR_CLIENT_SOCKET_PATH herdr pane read <pane> --format text
 ```
@@ -199,7 +234,7 @@ look like bugs and are not:
 
 ## Working on the protocol
 
-`HerdrKit.protocolVersion` is pinned in `Sources/HerdrKit/HerdrKit.swift` and
+`HerdaKit.protocolVersion` is pinned in `Sources/HerdaKit/HerdaKit.swift` and
 checked strictly at handshake, with no compatibility shims. When it changes,
 change it there and re-verify the affected variants against real bytes.
 
@@ -251,7 +286,7 @@ offscreen through the real draw path and asserting on pixels; input by handing
 synthetic `NSEvent`s to the view.
 
 Test files are named after the type they cover — `WireDecoderTests`,
-`CellGeometryTests` — and all live flat in `Tests/HerdrKitTests/`. Tests that
+`CellGeometryTests` — and all live flat in `Tests/HerdaKitTests/`. Tests that
 touch an `NSView` are `@MainActor`, since the view is main-actor isolated and
 they need to hand it non-`Sendable` values like fonts.
 

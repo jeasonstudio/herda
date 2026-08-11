@@ -18,7 +18,7 @@ removing any file:
 ```bash
 xcodegen generate
 Scripts/test.sh                     # xcodebuild test, filtered
-xcodebuild -project macos-client.xcodeproj -scheme HerdrPrototype \
+xcodebuild -project herda.xcodeproj -scheme Herda \
   -configuration Debug -destination 'platform=macOS' -derivedDataPath build build
 ```
 
@@ -29,19 +29,19 @@ then `~/.local/bin/herdr`, in that order.
 
 ## Structure
 
-- **All logic lives in the `HerdrKit` target**, a static library. The app target is
+- **All logic lives in the `HerdaKit` target**, a static library. The app target is
   the UI entry point and nothing else. This is not stylistic: if the tests used the
   app as their host, running them would execute the startup sequence and spawn a
   real `herdr server`. A framework instead of a static library fails codesigning
   when embedded in an xctest bundle (`bundle format unrecognized`).
-- `Sources/HerdrKit/Protocol/` — varint, framing, wire encode/decode, the client
+- `Sources/HerdaKit/Protocol/` — varint, framing, wire encode/decode, the client
   socket connection, the JSON API client.
-- `Sources/HerdrKit/Runtime/` — locating, spawning and isolating the server;
+- `Sources/HerdaKit/Runtime/` — locating, spawning and isolating the server;
   `TerminalSession` drives the whole startup sequence.
-- `Sources/HerdrKit/Terminal/` — the grid view and everything it needs: font
+- `Sources/HerdaKit/Terminal/` — the grid view and everything it needs: font
   metrics, glyph resolution, block geometry, key mapping, composition layout.
-- `Sources/HerdrKit/Theme/`, `Sidebar/` — palettes and sidebar state.
-- `Sources/HerdrPrototype/` — SwiftUI app, window, sidebar view.
+- `Sources/HerdaKit/Theme/`, `Sidebar/` — palettes and sidebar state.
+- `Sources/Herda/` — SwiftUI app, window, sidebar view.
 
 ## Principles
 
@@ -81,7 +81,7 @@ not affect the terminal and vice versa. They are separate sockets, separate task
 
 ## Protocol
 
-`HerdrKit.protocolVersion` is pinned in `HerdrKit.swift` and checked strictly at
+`HerdaKit.protocolVersion` is pinned in `HerdaKit.swift` and checked strictly at
 handshake — no compatibility shims. When it changes, change it here and re-verify
 the affected variants against real bytes.
 
@@ -107,11 +107,10 @@ way; keep it that way.
 
 The server is spawned with `HERDR_SOCKET_PATH`, `XDG_CONFIG_HOME` and
 `XDG_STATE_HOME` pointed inside
-`~/Library/Application Support/dev.herdr.macos-client-prototype/runtime`, and
-**every inherited `HERDR_*` variable is removed first** — this app is frequently
-launched from inside a real herdr session, and an inherited socket path would aim
-the child at the developer's own server. `RuntimePaths.environment(basedOn:)` owns
-this.
+`~/Library/Application Support/app.herda/runtime`, and **every inherited
+`HERDR_*` variable is removed first** — this app is frequently launched from
+inside a real herdr session, and an inherited socket path would aim the child at
+the developer's own server. `RuntimePaths.environment(basedOn:)` owns this.
 
 Note that it strips only `HERDR_*`. Anything else in the launching process's
 environment reaches the panes, so an agent started inside a pane can see markers
@@ -121,7 +120,7 @@ before assuming a pane is misbehaving.
 To drive the running prototype's own server from a shell:
 
 ```bash
-R="$HOME/Library/Application Support/dev.herdr.macos-client-prototype/runtime"
+R="$HOME/Library/Application Support/app.herda/runtime"
 export HERDR_SOCKET_PATH="$R/herdr.sock" XDG_CONFIG_HOME="$R/config" XDG_STATE_HOME="$R/state"
 env -u HERDR_CLIENT_SOCKET_PATH herdr pane read <pane> --format text
 ```

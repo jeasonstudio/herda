@@ -1,7 +1,7 @@
-name: macos-client
+name: herda
 
 options:
-  bundleIdPrefix: dev.herdr
+  bundleIdPrefix: app.herda
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -14,40 +14,40 @@ settings:
     ENABLE_HARDENED_RUNTIME: "NO"
 
 targets:
-  HerdrKit:
+  HerdaKit:
     # Static library rather than a framework: embedding a framework inside an
     # xctest bundle fails code signing ("bundle format unrecognized"). Static
     # linking keeps the logic testable without a host app.
     type: library.static
     platform: macOS
     sources:
-      - path: Sources/HerdrKit
+      - path: Sources/HerdaKit
 
-  HerdrPrototype:
+  Herda:
     type: application
     platform: macOS
     sources:
-      - path: Sources/HerdrPrototype
+      - path: Sources/Herda
     dependencies:
-      - target: HerdrKit
+      - target: HerdaKit
     info:
-      path: Sources/HerdrPrototype/Info.plist
+      path: Sources/Herda/Info.plist
       properties:
-        CFBundleName: HerdrPrototype
-        CFBundleDisplayName: Herdr Prototype
+        CFBundleName: Herda
+        CFBundleDisplayName: Herda
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.herdr.macos-client-prototype
+        PRODUCT_BUNDLE_IDENTIFIER: app.herda
 
-  HerdrKitTests:
+  HerdaKitTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: Tests/HerdrKitTests
+      - path: Tests/HerdaKitTests
     dependencies:
-      - target: HerdrKit
+      - target: HerdaKit
     settings:
       base:
         # xcodegen does not synthesise one for test bundles, and code signing
@@ -55,14 +55,14 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
-  HerdrPrototype:
+  Herda:
     build:
       targets:
-        HerdrPrototype: all
-        HerdrKitTests: [test]
+        Herda: all
+        HerdaKitTests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - HerdrKitTests
+        - HerdaKitTests

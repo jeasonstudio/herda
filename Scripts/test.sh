@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the HerdrKit unit tests and filters xcodebuild noise.
+# Runs the HerdaKit unit tests and filters xcodebuild noise.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -9,8 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 # status out of PIPESTATUS instead — nothing may run between the pipeline and
 # the assignment, or bash resets it.
 xcodebuild test \
-  -project macos-client.xcodeproj \
-  -scheme HerdrPrototype \
+  -project herda.xcodeproj \
+  -scheme Herda \
   -destination 'platform=macOS' \
   "$@" \
   2>&1 | grep -E "Test Suite|Test Case|error:|\*\* TEST"
