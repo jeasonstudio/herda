@@ -32,6 +32,19 @@ launch() {
   # running, and the relaunched app reconnects to the same one, so a rebuild
   # does not disturb the agents. Verified by the server keeping its pid across a
   # restart.
+  #
+  # The trade-off: SIGKILL never sends Detach, so the server only learns the old
+  # client is gone when it notices the closed socket. Across many relaunches it
+  # accumulates render targets, and each one carries the terminal size that
+  # instance declared. The server's terminal_area is then overwritten by whichever
+  # target rendered last, which recomputes the layout and emits layout_updated
+  # every time — measured at ~10 events/second with a stale target, versus one
+  # event on a fresh server.
+  #
+  # Harmless for the agents, but it looks exactly like a layout bug: pane rects
+  # drift, the reported area flips between the sizes different builds declared,
+  # and the pane count changes. If layout churn appears while iterating, relaunch
+  # with --reset before believing it.
   pkill -9 -f "$EXECUTABLE" 2>/dev/null || true
 
   # Executed directly rather than through `open`, which proved unreliable across
