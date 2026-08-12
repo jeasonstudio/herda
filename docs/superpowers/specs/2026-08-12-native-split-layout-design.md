@@ -1,241 +1,191 @@
 # 原生 split 布局设计
 
-2026-08-12。改造对象：终端区的容器结构 —— 从「herdr 用字符绘制的 split」改成原生 per-pane 卡片。不改渲染引擎、不改 wire protocol、不改侧边栏。
+2026-08-12。改造对象：终端区的**布局所有权** —— 从「herdr 用字符网格排布 pane，herda 照着重绘」改成「herda 用原生 view 排布 pane，herdr 只提供每个 pane 的终端」。
 
-本文所有关于 herdr 行为的结论都来自 `herdrdev/herdr` 工作副本（`69a07fd`，binary 0.8.0，`PROTOCOL_VERSION = 19`，与 `HerdaKit.protocolVersion` 一致）的源码行号，或本机实测。凡未标注来源的判断都已被删掉 —— 这个方案前两版就是死在「读了结构定义就以为知道行为」上。
+**本文是第二版设计。第一版已实现并被否决**，原因见下一节；它的方案与被否决理由完整保留在「第一版：切割单块 grid」一节，因为那是本文所有取舍的由来。
 
-## 目标
+本文所有关于 herdr 行为的结论都来自 `herdrdev/herdr` 工作副本（`69a07fd`，binary 0.8.0，`PROTOCOL_VERSION = 19`，与 `HerdaKit.protocolVersion` 一致）的源码行号，或本机实测。凡未标注来源的判断都已被删掉。
 
-Split Right / Split Down 之后，pane 之间是原生卡片间距与描边，不是 ratatui 画的 box-drawing 字符。每个 pane 是独立的原生 view，各自有原生滚动条，焦点由卡片描边表达。
+## 第一版：切割单块 grid（已实现，已否决）
 
-## 非目标
+第一版让 herdr 的字符网格对布局保持权威，herda 按 `pane.layout` 返回的 rect 把单块 grid 切成 N 份，用 `pane_borders = false / pane_gaps = true` 让 herdr 不画边框并留出一格空隙。
 
-- **不改渲染引擎。** `TerminalGridView`、`GlyphCache`、`CellGeometry`、`TerminalFont` 一行不改。每个 pane 复用同一个 view 类，喂给它一块切出来的子帧。
-- **不改 wire protocol。** 零新变体。`ObserveTerminal` / `ControlTerminal` / `AttachScroll` 全部不需要实现（理由见「被否决的方案」两节）。
-- **不写 ANSI 输入编码器。** 输入继续走 `InputEvents`，编码由 server 侧的 `encode_key`（`src/input/encode.rs:14`）负责。`KeyMap`、`MarkedText`、`ScrollAccumulator` 一行不改。
-- **阶段 1 不重做 herdr 的 modal。** 主动弹出的用 config 关掉，prefix key 主动按出来的退回整块渲染。原生替换分批做，见「阶段划分」。
-- **不做 per-pane 独立连接。** 仍然只有一条 render 连接。
+它跑通了，测试 387 全过。否决它的不是缺陷，是**这些后果都是那个前提的必然推论，逐条修都修不掉**：
 
-## 现状与根因
+- **间距被量化成一格。** 13pt 字号下是 8pt，改字号就改布局。布局是窗口尺度的事，字号是内容尺度的事，两者被绑在一起。
+- **圆角必须从那一格里挤。** 卡片内容必须恰好等于 `rect × cellSize`，于是 8pt 的格要同时供养圆角内缩（`0.293r` 规则）和可见间距，最后妥协成 2pt 内缩 / 6pt 圆角 / 4pt 间距。这三个数没有一个落在既有的 8pt 网格上。
+- **跨界内容只能靠启发式发现。** herdr 的 modal 画在整块 grid 上会跨越 pane 边界，切割会把它切开并丢掉落在间隙格的内容。第一版的解法是 `GapProbe`：检查间隙格是否空白，非空就**放弃整个卡片网格**退回整块渲染。也就是靠猜 herdr 的意图来决定用哪种视觉模式。
+- **PTY 尺寸由 herdr 的 rect 决定**，per-pane 鼠标坐标算错（已知缺陷，未修），滚动条要从轮询的 `pane.scroll` 反推。
+- **拖分隔线是往返请求且按格量化。**
 
-herda 握手声明 `LaunchMode.app`（`Sources/HerdaKit/Protocol/WireEncoder.swift:38`），语义是「把整个终端区给我」。server 于是把整个 workspace 的排版结果 —— split 后的所有 pane、它们之间的分隔线、tab bar、herdr 自己的 modal —— 由 ratatui 渲染成一整块字符网格，经 `ServerMessage.frame(GridFrame)` 发过来。
+最后那个「三个 pane 显示成一张大卡片」的 bug 值得留在记录里：根因是 `isWholeGridFallback` 只在帧到达时重算，而 herdr 对相同内容做帧去重，于是布局到达后可能长时间没有下一帧，标志停在初始值。它被修好了（布局变化时用保留的最后一帧重跑路由），但**修法是让一个启发式跑得更勤**。那个启发式本身才是缺陷。
 
-客户端拿到的是 `[GridCell]` 矩阵加一个 cursor（`Sources/HerdaKit/Protocol/WireTypes.swift:50`），**不知道有几个 pane、边界在哪、谁是焦点**。那条竖线对 `TerminalGridView` 来说和 `cat` 一个文件里的竖线毫无区别。
+同期还有三次「修复」建立在错误假设上，完全没有解决问题：以为多余的布局事件来自别的 workspace/tab 而加了两层过滤，实测 `tab_count=1`，过滤不可能挡住任何东西；真正的成因是 `run.sh` 用 `pkill -9` 保留 server，而 SIGKILL 从不发 Detach，累积的僵死 render target 让 `terminal_area` 反复被覆写（~10 事件/秒 vs 全新 server 的 1 次）。这条已记进 `Scripts/run.sh` 的注释。
 
-这不是缺陷，是 `docs/design.md` 三处明确接受的天花板：§3 决策表「server 排版 + 原生外壳……布局子系统工作量为零」；§3 末「方案 A 的天花板（明确接受）：pane 分隔线、tab bar、herdr 自身的 modal 仍由 ratatui 以字符绘制……若原型验证想法成立，可逐步把终端区拆为 per-pane 原生 view」；§10 明确不做列表里的「原生 split 布局」。
+## 第一性原理
 
-本文推翻的是 §10 那一条。§3 末尾预留的路径成立，但走法和当年设想的不同。
+每个 pane 跨越 herda↔herdr 边界的，最小只有三样：**尺寸出去、输入出去、单元格网格进来**。
 
-## 被否决的方案一：per-pane `ControlTerminal` 连接
+「pane 怎么排布」不在其中。那是窗口布局，属于窗口。间距、分隔线、圆角、焦点环、滚动条同理 —— 全是原生 chrome。
 
-每个 pane 一条 client socket，以 `launch_mode = TerminalAttach` 握手后发 `ControlTerminal { target, takeover }`，各自收自己 pane 的帧、各自发输入。
+herdr 本质是 **PTY + 终端模拟 + 会话持久化服务**。第一版把它当成了 UI 服务，于是必须把它的 UI 重绘一遍。本版不用它的 UI。
 
-这条路技术上完全成立，且已验证到字节级：
-
-- 变体编号来自源码自带的 tag 测试（`src/protocol/wire.rs:1060` 起）：`Hello=0` / `Input=1` / `ClipboardImage=2` / `Resize=3` / `Detach=4` / `AttachTerminal=5` / `AttachScroll=6` / `InputEvents=7` / `ObserveTerminal=8` / `ControlTerminal=9`。前四个与 herda 已实现的完全吻合。
-- `ClientLaunchMode` 是 `App=0` / `TerminalAttach=1`（`src/protocol/wire.rs:57`）。必须以后者握手，否则 `client_is_pending_terminal_mode` 拒绝并回 `ServerShutdown`。
-- `ControlTerminal` 与 `AttachTerminal` 最终都进 `ClientConnectionMode::TerminalAttach`（`control_terminal_client` 直接调 `attach_terminal_client`），区别只是 target 解析：前者经 `resolve_terminal_session_target` → `resolve_terminal_target_id_string`，接受 `w1:p1` 这类 pane 标识；后者要 terminal_id。
-- attach 时 server 插入 `direct_attach_resize_locks` 并 `runtime.resize(rows, cols, ...)`，此后 **PTY 尺寸由客户端做主，layout 引擎不再干预该 terminal**（`src/ui/panes.rs:189` 等四处都要 `!contains(terminal_id)` 才 resize）。
-- 一个 terminal 只允许一个 attach owner（`terminal_attach_owners`），`takeover: true` 可抢。
-
-**否决原因：输入必须走 raw 字节。** attach 模式下 `ServerEvent::ClientInput`（变体 1）才会命中 `ClientConnectionMode::TerminalAttach` 分支并调 `apply_terminal_attach_input(runtime, data)` 直写 PTY；`ClientInputEvents` 只对 `TerminalObserve` 做了拒绝，attach 会继续走 `handle_client_input_events` → `events_for_app_routing`，被当成 app 客户端的按键去路由。
-
-也就是说这条路要在 Swift 里重写 `src/input/encode.rs` —— **1185 行**，覆盖 kitty keyboard protocol（CSI u、`REPORT_EVENT_TYPES`、`REPORT_ALTERNATE_KEYS`、`REPORT_ASSOCIATED_TEXT`）、legacy xterm 的 modified special keys、application cursor mode、鼠标 SGR/X10 编码，以及一批只有踩过才知道的边界（`encode_terminal_key` 开头那段注释记着 issue #769：release 事件在非 `REPORT_EVENT_TYPES` 下不能发字节，否则 Enter/Backspace 会重复）。
-
-附带代价还有两条：herdr 的全部 UI（tab bar、modal、prefix key）不再出现在任何帧里；`foreground_client_id` 只从 full app 客户端里选（`src/server/clients.rs:270` 起的 `latest_app_client`），没有 app 连接时 `effective_size` 退化成 `MIN_COLS × MIN_ROWS` = 80×24（`src/server/headless.rs:258`、`:1087`）。
-
-## 被否决的方案二：app 输入连接 + N 条 `observe` 连接
-
-保留一条 app 连接专做输入与尺寸声明（从而复用 server 侧 `encode_key`），pane 内容走 N 条 `ObserveTerminal` 只读连接。
-
-这条路也验证过，且解决了方案一的全部问题：
-
-- **observe 与 app 走同一条帧构造路径**：`render_targets` 把 attach/observe 客户端也纳入渲染目标（`src/server/clients.rs` 的 `render_targets`），循环里 attach/observe 分支走 `render_terminal_virtual(runtime, area)` + `FrameData::from_ratatui_buffer_with_hyperlinks`，和 App 分支同一个 `FrameData`（`src/server/headless.rs:4130` 附近）。herda 的 `WireDecoder` 与 `TerminalGridView` 可原封不动复用。
-- **三种模式的 resize 各有明确分支**（`src/server/headless.rs:2961` 起）：attach 更新尺寸并 `runtime.resize`；observe 只更新 `terminal_size` + `request_repaint`，**不动 PTY**；app 更新尺寸后 `promote_client_to_foreground` + `resize_shared_runtime_to_effective_size`。
-- observe 拒绝一切输入（`ClientInput` 与 `ClientInputEvents` 两个分支都对 `TerminalObserve` 返回 false），多条 observe 之间无冲突、无 takeover 问题。
-
-**否决原因：发现 `pane_gaps` / `pane_borders` 之后它整个变成多余。** N 条连接的生命周期管理、首帧同步、每条连接的 resize 协调、以及非焦点 pane 的 cursor 抑制（observe 帧带的是该 terminal 自己的 cursor，每个 pane 都会有一个）全是白付的成本 —— 选定方案用一条已有连接就拿到了同样的结果。
-
-记下它是因为它仍是唯一能做到「每个 pane 尺寸完全由原生 view 决定、与 herdr layout 解耦」的路。若将来要让 pane 尺寸脱离 herdr 的 layout，从这里接。
-
-## 选定方案
-
-用 config 关掉 herdr 自己的 pane chrome，按 `pane.layout` 返回的 rect 把单块 grid 切成 N 份。
+## 方案：per-pane `ControlTerminal` 连接（选定）
 
 ```
-├── API socket     — pane.layout 快照 + layout_updated 事件 + pane 操作
-└── app 连接 × 1   — 整块 grid，现有连接代码一行不改
+├── API socket (JSON)      — 侧边栏、事件、pane 生命周期、输入
+└── pane socket × N (bincode) — Hello{TerminalAttach} → ControlTerminal{paneId} → Resize → 帧流
+                              每条连接只有一个 pane、一个 TerminalGridView
+   app 渲染连接 × 0        — 删除
 ```
 
-关键在于 `pane_layout_snapshot`（`src/app/api/panes.rs:1674`）返回的 rect 不是原始 layout 矩形，而是 `apply_pane_chrome(tab.layout.panes(area), pane_borders, pane_gaps)` 的结果（`:1683`）。`apply_pane_chrome`（`src/ui/panes.rs:90`）在 `multi_pane && pane_gaps && !pane_borders` 时（`:103`）对有右邻居的 pane `shrink_for_one_cell_gap(width)`、有下邻居的 shrink height，同时 `borders = Borders::NONE`（`:112`）。`shrink_for_one_cell_gap` 就是 `size - 1`（`:82`）。
+**app 渲染连接整个消失。** `TerminalSession` 现在的整格客户端形态、`FrameSlice`、`GapProbe`、`PaneFrameRouter`、`isWholeGridFallback` 全部删除。
 
-于是 `pane_borders = false, pane_gaps = true` 这一组配置同时做到三件事：herdr 不画任何字符边框；pane 之间留出恰好一格空隙；rect 就是 herda 该渲染的内容区。
+### 已验证的协议事实
 
-三轮方案的工作量对比：
+这几条是本方案的地基，全部有源码行号或实测支持。
 
-| 方案 | wire 改动 | 新连接 | ANSI 编码器 |
-|---|---|---|---|
-| 被否决一：per-pane attach | 4 个变体 | N 条 | 1185 行 |
-| 被否决二：app + observe | 1 个变体 | N 条 | 不需要 |
-| **选定：切割单块 grid** | **零** | **零** | 不需要 |
+**一｜每条连接按自己声明的尺寸独立渲染。** `headless.rs:4063` 的渲染循环里 `let area = Rect::new(0, 0, cols, rows)`，`(cols, rows)` 逐客户端取自该连接自己的 `terminal_size`；`TerminalAttach` / `TerminalObserve` 分支走 `render_terminal_virtual(runtime, area)`（`render_stream.rs:368`）—— **单个 terminal runtime，无任何 chrome**，出来的 `FrameData` 与 App 分支同一个构造函数，herda 的 `WireDecoder` 和 `TerminalGridView` 原封不动复用。
+
+实测（herda 自己的隔离 server，三 pane 会话，herda app 客户端同时持有 116×41）：
+
+| observe 目标 | 请求尺寸 | 实测 ANSI 寻址范围 |
+|---|---|---|
+| `w1:p1` | 40×10 | row 1–10, col 1–40 |
+| `w1:p2` | 100×30 | row 1–30, col 1–100 |
+
+命令 `herdr terminal session observe <pane> --cols N --rows N`，输出是每帧一个 JSON 对象带 base64 ANSI，解码后统计 CUP（`ESC [ r ; c H`）的极值。三个 render target 同时存在、互不干扰。
+
+**二｜`ControlTerminal` 连接的 `Resize` 直接 resize 那个 pane 的 PTY。** `ServerEvent::ClientResize`（`headless.rs:2961`）的 `TerminalAttach` 分支更新自己的 `terminal_size` / `cell_size` 后 `runtime.resize(rows, cols, cell_width_px, cell_height_px)`（`:2992`），然后 **`return true`** —— 在 `resize_shared_runtime_to_effective_size()` 之前返回，完全不碰共享网格。
+
+`MIN_COLS = 80 / MIN_ROWS = 24`（`headless.rs:258`）只作用于 `effective_size`，**不约束 attach 连接**：上面实测的 40×10 生效即是证据，pane 可以窄于 80 列。
+
+**三｜attach 会把该 terminal 锁出 layout 的 resize 范围。** `attach_terminal_client` 插入 `direct_attach_resize_locks`（`headless.rs:2660`），客户端移除时清除（`:1504`），而 `ui/panes.rs` 的四处 resize（`:189`、`:206`、`:250`、`:283`）全部以 `!contains(terminal_id)` 为前提。
+
+所以 herda 持有某 pane 的控制连接后，**herdr 的 layout 引擎永远不会再 resize 那个 PTY**，即使有别的 app 客户端成为 foreground。
+
+**四｜没有 app 客户端时 herdr 根本不排布 pane。** `resize_shared_runtime_to_effective_size_with_pending_agent_resumes` 在 `foreground_client_id.is_none()` 时直接 return（`headless.rs:1037`）。而 `is_full_app_client()` = `mode == App && !pending_terminal_attach`（`clients.rs:176`），`pending_terminal_attach` 由 `Hello` 的 `launch_mode == TerminalAttach` 置位（`client_transport.rs:566`），`promote_latest_remaining_client` 只从 `latest_app_client` 里选。herda 全部连接都是 attach 形态 ⟹ 无 foreground ⟹ 无排布。
+
+**五｜`pane.send_keys` 是 mode-aware 的、按 pane 寻址的输入通道。** `handle_pane_send_keys`（`app/api/panes.rs:1590`）→ `encode_api_keys(runtime, &params.keys)`（`app/api_helpers.rs:37`）→ **`runtime.encode_terminal_key(...)`** —— 用那个终端**自己的**模式状态编码，然后 `runtime.try_send_bytes`。参数是 `{pane_id, keys: [String]}`；`pane.send_input` 是 `{pane_id, text, keys}`，文本与按键一次发。
+
+**这条推翻了第一版否决 per-pane 连接的唯一理由。** 第一版写的是「必须在 Swift 里重写 `src/input/encode.rs` 的 1185 行」—— 不必，herdr 按 pane 替我们编码。application cursor mode、bracketed paste 这些无法从客户端观测的终端状态，全部留在正确的一侧。
+
+**六｜pane id 可作为 attach target。** `resolve_terminal_target_id_string`（`headless.rs:1666`）→ `app.resolve_terminal_target`（`app/terminal_targets.rs:33`），herdr 自己的测试 `app/mod.rs:4191` 断言 pane id 可解析。变体编号来自源码自带的 tag 测试（`wire.rs:1060` 起）：`Hello=0` / `Input=1` / `ClipboardImage=2` / `Resize=3` / `Detach=4` / `AttachTerminal=5` / `AttachScroll=6` / `InputEvents=7` / `ObserveTerminal=8` / `ControlTerminal=9`。`ClientLaunchMode` 是 `App=0` / `TerminalAttach=1`（`wire.rs:57`）。
+
+**七｜`pane.split` 返回新 pane 的完整信息。** `handle_pane_split` 以 `encode_success(id, ResponseResult::PaneInfo { pane })` 结束（`app/api/panes.rs:125`），参数含 `target_pane_id` / `direction` / `ratio` / `cwd` / `focus` / `env`（`api/schema/panes.rs:12`）。herda 由此拿到 `pane_id` 与 `terminal_id` 去开连接。
 
 ## 硬约束
 
-这几条是代码和实测推出来的，改设计时不能绕过。
+**一｜绝不在 pane 连接上发 `InputEvents`。** `ServerEvent::ClientInputEvents` **没有**对 `TerminalAttach` 早退（只拒绝 `TerminalObserve`，`headless.rs:2893`），会落到 `handle_client_input_events` → `promote_client_to_foreground(client_id)`，而该函数**没有任何 guard**（`headless.rs:1460`），会把 attach 连接提为 foreground。随后 `sync_foreground_client_state` 令 `effective_size = 那一个 pane 的尺寸`（`:1124`），`resize_shared_runtime_to_effective_size_before_input` 把**所有 pane 重排进单个 pane 的尺寸里**。
 
-**一｜`pane.layout` 的 rect 等于实际渲染区域，但这个相等只在 `pane_borders = false && pane_scrollbars = false` 下成立。** rect 是 `apply_pane_chrome` 之后的值（`src/app/api/panes.rs:1693` 取 `pane.rect`）。渲染路径接着做两步收缩：`pane_inner_rect(info.rect, info.borders)` 在 borders 为空时原样返回（`src/ui/panes.rs:48`），`stable_terminal_inner_rect(pane_inner, pane_scrollbars)` 在 `!pane_scrollbars` 时原样返回（`:34`）。两个键都关掉，这两步才都是恒等变换，`rect == inner_rect == PTY 尺寸 == 渲染区域`。
+这是本方案最容易踩的坑，而且症状是全局的，很难回溯到某一次按键。输入只走 API 的 `pane.send_keys` / `pane.send_text`。
 
-开了任何一个，rect 就不再是内容区：`pane_borders = true` 让 `apply_pane_chrome` 走 `:112` 的另一支给出 `Borders::ALL` 且**不做 shrink**（`:103` 的条件不满足），rect 紧贴、字符边框回来；`pane_scrollbars = true` 让渲染区比 rect 窄一列（`:42` 的 `width - 1`），切出来的子帧会多一列错位。三个键必须成组设置。
+**二｜必须用 `ControlTerminal`，不能用 `ObserveTerminal`。** observe 只更新自己的渲染区、**不 resize PTY**（`headless.rs:2997` 起的分支），于是 PTY 尺寸与卡片尺寸永久不一致、内容被裁切。每个 pane 都需要自己的 PTY 尺寸，只有 control 提供。
 
-rect 之间那一格空隙是 herda 用来画间距和描边的位置，不是需要额外扣除的东西。
+代价是 `ControlTerminal` 占据该 terminal 的**独占可写 owner 槽**（`terminal_attach_owners`），shell 里再 `herdr terminal attach` 需要 `--takeover`。
 
-**二｜cell 宽度实测 8.0pt，与 `ChromeMetrics.cardGap` 相同。** 本机 `MapleMono-NF-CN-Regular` 13pt（`TerminalFont.preferredFamilies` 第一优先级）：`CTFontGetAdvancesForGlyphs` 给出 advance = 7.8，`cellSize.width` 取 `advance.rounded()` = 8.0；cell.height = 17.0，与 design.md 记录一致。herdr 留的一格空隙因此正好是 8pt，等于现有的 `cardGap`，卡片间距天然落在 8pt 网格上。
+**三｜握手顺序固定。** `client_is_pending_terminal_mode` 要求 `pending_terminal_attach && mode == App`（`headless.rs:2672`），即必须 `Hello { launch_mode: TerminalAttach }` 之后再发 `ControlTerminal`。顺序错了 server 回 `ServerShutdown` 并踢掉连接。
 
-这条依赖字体：`cellSize.width` 是 rounded 的，advance 落在 [7.5, 8.5) 都得 8。换字体或改字号后该值会漂，间距与 rect 的对应关系要重新测，不能假定恒为 8。
+**四｜cols/rows 由 view 尺寸和字体推出，不能反过来。** `cols = floor(width / cellSize.width)`、`rows = floor(height / cellSize.height)`，`cellSize` 来自 `TerminalFont`（本机 MapleMono-NF-CN 13pt → 8.0 × 17.0）。这是 CLAUDE.md「cell 度量来自字体自己的表，绝不硬编码」的直接应用。余下的不足一格的边缘由卡片内边距吸收 —— 这是第一版做不到的事：那里整块 grid 的余量会累积。
 
-**三｜所有布局操作都发 `layout_updated`，键盘操作也一样。** 生产链条是 `impl App.handle_navigate_key`（`src/app/input/navigate.rs:127`）→ `split_focused_pane_via_api`（`:568`）→ `runtime_pane_split`（`src/app/runtime_mutations.rs:140`）→ `dispatch_runtime_mutation(Method::PaneSplit)`，与 JSON API 同一个派发器，因此同样触达 `emit_layout_updated_event`（`src/app/api/panes.rs:1728`）。`runtime_layout_set_split_ratio`（`:152`）、`runtime_pane_zoom`（`:148`）、`src/app/input/modal.rs:1150` 的 `runtime_pane_resize` 同理。
+**五｜`zoomed` 由 herda 自己表达。** 第一版硬约束六（snapshot 的 `panes[]` 在 zoom 时仍报告未 zoom 的 rect）**不再适用** —— herda 不读 herdr 的 rect。zoom 是 herda `PaneTree` 上的本地状态：只显示焦点 pane 铺满、其余连接保持存活但不渲染（PTY 尺寸是否随之改变见「待定项」）。
 
-同文件 `:1724` 有一条直接改 state 的 `state.split_pane(...)`，属于 `execute_navigate_action_in_context`（`:1580`），但它的两个调用者 `handle_navigate_key(state, key)`（`:1307`）和 `execute_navigate_action`（`:1568`）**都带 `#[cfg(test)]`** —— 测试专用，不是生产路径。这条排查是整个方案的地基：如果键盘操作不发事件，UI 就跟不上布局变化。
+## 拓扑归 herdr，几何归 herda
 
-**四｜滚动信息走 snapshot，不能走 per-pane 订阅。** `PaneInfo.scroll` 是 `Option<PaneScrollInfo>`（`src/api/schema/panes.rs:429`），带 `offset_from_bottom` / `max_offset_from_bottom` / `viewport_rows`（`:434`），正好是画 thumb 需要的三个量，且出现在 `success_response.$defs.PaneInfo` 里 —— 现有的 1.5 秒轮询（`TerminalSession.swift:166`）可以直接搭车。
+herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 探测、`herdr pane read` 互操作。herda 拥有**它们在哪**。
 
-实时的 `PaneScrollChanged { pane_id }` 是 per-pane **订阅**（`src/api/schema/events.rs:82`，`src/api/subscriptions.rs:287`），受「订阅集一旦开始不能扩展」的限制 —— 正是 `SidebarModel.mergeStatuses` 注释里记的那个坑，pane 增删时要重建连接。所以不用它。1.5 秒对滚动条太慢，滚动时本地乐观更新、轮询校正，与拖分隔线同一个模式。
+- 建 pane：herda 调 `pane.split`（拿到新 pane 信息）→ 插入自己的 `PaneTree`
+- 删 pane：`pane.close`，或收到 `pane_exited` / `pane_closed` 事件 → 从树上摘除
+- 几何：完全本地，不发任何请求，不读 `pane.layout`
 
-**五｜`ProductAnnouncement` 没有 config 开关。** 启动 mode 决定（`src/app/mod.rs:500`）里它紧跟 Onboarding：`if config.should_show_onboarding() { Onboarding } else if startup_product_announcement.is_some() { ProductAnnouncement }`。`load_unseen_for_current_version`（`src/product_announcements.rs:100`）只看 store 文件，没有配置项能关。herdr 升级带新公告时它会在启动时占满屏幕，而且和 Onboarding 同类 —— design.md §11 记的那个「在 keybinding 匹配之前吞掉按键」的坑。
+**两边的 rect 会故意不一致**，这是无害的，因为没有任何东西渲染 herdr 的 rect。加上已验证事实三（attach 锁出 resize），herdr 的 layout 引擎也不会试图纠正它。
 
-解法确定：`load_unseen_from_path`（`:191`）在 `store.latest` 为 None 时返回 None。store 是 `state_dir()/product-announcements.json`（`:8` 的常量、`:78`），而 `state_dir()` 取 `XDG_STATE_HOME` + app 目录名（`src/config/io.rs:36`），herda 已经把它指向自己的 runtime（`RuntimePaths.swift:28`、`:112`）。启动前把该文件写成空 store 即可，和现在写 config.toml 同一类操作。
+`layout.set_split_ratio` / `pane.resize` / `pane.layout` / `layout_updated` **本方案全部不用**。
 
-**六｜`zoomed` 时必须忽略 `panes[]` 的 rect。** snapshot 的 `zoomed` 只是把 `tab.zoomed` 透传（`src/app/api/panes.rs:1720`），而同一份快照里的 `panes` 来自 `tab.layout.panes(area)`（`:1684`）—— **不考虑 zoom**，给的仍是未 zoom 的多 pane 布局。实际渲染完全不同：`src/ui/panes.rs:179` 在 `tab.zoomed` 时只取 `tab.layout.focused()` 一个 pane，让它占据整个 `area`（`pane_inner_rect(area, borders)`）。
+## 失去的能力（精确列举）
 
-所以 `zoomed == true` 时 herda 必须只渲染 `focused_pane_id` 一张卡片、铺满整个终端区，忽略 `panes[]` 里的所有 rect。照着 rect 切会拿多 pane 的矩形去切一块只有单 pane 内容的 grid，画面整体错位。
+**一｜herdr 的键绑定与 TUI modal 在 herda 里彻底消失。** 没有 app 连接就没有 prefix key、Navigate 模式、命令面板、任何 modal。每一项都必须原生重做或明确放弃。
 
-（`src/ui/panes.rs:235` 还有一处 `ws.zoomed` 的 workspace 级 zoom 走同样逻辑，snapshot 只暴露 tab 级的那个。**实测确认 workspace 级从 API 不可达** —— `herdr workspace` 没有 zoom 子命令，zoom 只有 `pane zoom`，所以 `tab.zoomed` 是充分的。）
-
-## config 变更
-
-`RuntimePaths.configContents` 的 `[ui]` 段新增五个键。全部属于 `UiConfig`（`src/config/model.rs:809`），默认值都是 `true`：
-
-```toml
-[ui]
-pane_borders = false            # :840  不画 pane 字符边框
-pane_gaps = true                # :844  pane 之间留一格空隙（默认已是 true，显式写出）
-pane_scrollbars = false         # :842  不画字符滚动条 —— 否则与原生滚动条并存
-confirm_close = false           # :834  关掉关闭确认 modal
-prompt_new_tab_name = false     # :836  关掉新 tab 命名 modal
-prompt_new_workspace_name = false  # :838  默认已 false，显式写出
-```
-
-三个 pane 键各管一件事，不能只设一部分：`pane_borders = false` 与 `pane_scrollbars = false` 共同保证 **rect 等于实际渲染区域**（硬约束一），`pane_gaps = true` 保证 **pane 之间留出那一格**，也就是原生卡片间距与描边的落点（硬约束二）。少设 borders 或 scrollbars 会让切出的子帧错位；少设 gaps 只是没有间隙可用，卡片会紧贴。
-
-`onboarding = false` 必须留在所有 `[section]` 之前 —— design.md §11 的顺序约束不变，已有测试守护。
-
-另需在 spawn 前写 `<runtime>/state/herdr/product-announcements.json` 为空 store（硬约束五）。
-
-`confirm_close` 的文档措辞是「Ask for confirmation before closing a workspace」，但 `close_focused_pane_via_api_requires_confirmation`（`src/app/input/navigate.rs:586`）也以 `state.mode == Mode::ConfirmClose` 作为返回值，说明 pane 关闭同样会进这个 mode。实施时要实测确认这个键是否覆盖两者。
-
-## 数据流
-
-**启动。** 现有序列只加两步：config 多写上面几个键、API 通道建立后请求一次 `pane.layout`。
-
-layout 快照必须在 app 连接 hello 完成之后取，否则 rect 是按 80×24 算的、没有意义。**这个顺序现有流程天然满足**：client 注册时就有 `if !direct_attach_requested { self.foreground_client_id = Some(client_id) }` 紧跟 `sync_foreground_client_state()` + `resize_shared_runtime_to_effective_size()`（`src/server/headless.rs:2818` 起），也就是 hello 一完成 `effective_size` 就是声明的尺寸；而 herda 正是 handshake 成功后才 `attach` 并启动 API 通道（`TerminalSession.swift:84` → `:117`）。不需要额外的等待或重取。
-
-（`promote_client_to_foreground` 的三个生产调用点都在输入或 resize 路径上 —— `:1705`、`:2720`、`:3019` —— hello 走的是上面那条直接赋值，不经过它。`direct_attach_requested` 的连接不会成为 foreground，这也是被否决方案一里 `effective_size` 退化到 80×24 的直接原因。）
-
-**布局变化。** 收 `layout_updated` → 整份 layout 快照替换 → view 跟着变。单向数据流，没有 diff 逻辑：pane 增删只是快照变了，SwiftUI 按 paneId 复用 view。拖分隔线时拖动中只更新本地临时 ratio（不发请求），松手发 `layout.set_split_ratio`，事件回来对齐。
-
-**不需要建递归树。** `PaneLayoutSnapshot` 是平坦的：`panes[]` 每项直接带 rect，够摆卡片；`splits[]` 每项带 `id` / `direction` / `ratio` / `rect`，够定位可拖区域并作为 `layout.set_split_ratio` 的目标。真正的递归结构只在 `layout.export` 返回的 `LayoutDescription.root`（`LayoutNode` 的 pane/split 两支）里，本方案用不到它。
-
-**输入。** 继续走 app 连接的 `InputEvents`。唯一新增的是坐标换算：pane 卡片内的鼠标位置要加上该 pane rect 的原点还原成全局 grid 坐标，因为 herdr 用 `pane_at(col, row)`（`src/app/input/mouse.rs:1426`）命中 pane。约束是 `:78` 的 `if self.mode != Mode::Terminal { return; }` —— herdr 处于 modal 或 navigate 模式时鼠标不进 pane。
-
-**滚动。** 滚轮走同一条路：换算后的坐标 → `pane_at` 命中（`:81`）→ `forward_pane_reported_wheel`（`:88`）。滚非焦点 pane 因此天然可用。滚动条位置见硬约束四。
-
-**pane 生命周期。** `shutdown_terminal_stream_clients`（`src/server/headless.rs:2512`）只影响 attach/observe 客户端，本方案没有这类连接，该路径完全不涉及。herda 只从 `layout_updated` 得知 pane 消失。app 连接的 `ServerShutdown` 仍然只表示会话级断开，`TerminalSession.swift:103` 的现有语义不变。
-
-**跨界的 modal。** herdr 的 modal 画在整块 grid 上，可能跨越 pane 边界，切割后会被 8pt 间距切开一条缝，落在间隙格上的内容会丢失。解法是一个基于帧内容的启发式：`pane_borders = false` 时间隙格本该是空白，检测到间隙格有非空内容就退回整块 grid 渲染。纯函数，可测，不需要额外 API。
-
-## 阶段划分
-
-阶段边界的依据是：**「关掉 modal」和「拦截快捷键 + 原生实现」不能只做一半。** 如果关掉 modal 但仍转发 prefix key，用户按下 prefix 后 herdr 进入 Navigate 模式，grid 上会画模式提示，而且鼠标不再路由到 pane（`mouse.rs:78`）。半途状态比两端都难受。
-
-**阶段 1（本次）**：原生 split 卡片网格 + 上面那组 config + 原生滚动条 + 拖分隔线。**保留 herdr 的全部键盘操作** —— prefix key 继续转发，split/zoom/focus/resize 都由 herdr 处理，herda 从 `layout_updated` 跟随。主动弹出的 modal 已被 config 关掉；prefix key 主动按出来的 modal 走跨界启发式退回整块渲染，是可解释的行为。
-
-**阶段 2+（逐个替换）**：每用原生实现一个 UI，就拦截对应快捷键。herdr 侧支撑完整，116 个 API 方法覆盖了所有 modal 背后的操作：
+**这需要一份完整清单才能动手** —— `Mode` 有 20 个变体（`app/state.rs` 的 `pub enum Mode`），漏掉一个就是某个功能静默消失。第一版 spec 已经列过 API 对应关系，直接沿用：
 
 | Mode | 对应 API |
 |---|---|
 | RenameWorkspace / RenameTab / RenamePane | `workspace.rename` / `tab.rename` / `pane.rename` |
 | NewLinkedWorktree / OpenExistingWorktree / ConfirmRemoveWorktree | `worktree.create` / `worktree.open` + `worktree.list` / `worktree.remove` |
-| Resize | `layout.set_split_ratio` / `pane.resize` |
-| ConfirmClose | `pane.close` + `confirm_close = false` |
-| ContextMenu / GlobalMenu | 各操作均有对应方法 |
+| Resize | 不需要 —— 几何归 herda |
+| ConfirmClose | `pane.close` |
+| ContextMenu / GlobalMenu | 各操作均有对应方法，改为原生菜单 |
 | Navigator | `session.snapshot` + `pane.focus` |
 | Settings | 写 config.toml + `server.reload_config` |
 | Copy | 原生文本选择 |
 
-`Mode` 共 20 个变体（`src/app/state.rs` 的 `pub enum Mode`）。`Onboarding` 已由 config 关闭，`ProductAnnouncement` 由空 store 关闭（硬约束五），`Terminal` / `Prefix` / `Navigate` 是模式而非弹窗。`popup.close` 也有 API，popup pane 可控。
+**二｜鼠标转发给主动开启鼠标上报的 TUI 应用 —— 确证的缺口。**
 
-每一步都是可用状态，不存在「写到一半不能用」的窗口。
+`ServerMessage::MouseCapture`（`wire.rs:695`）是唯一告知客户端「现在该捕获鼠标」的通道，而 `stream_host_mouse_capture_mode`（`headless.rs:3665`）**跳过所有 `!is_full_app_client()` 的连接**（`:3681`），且它的值 `should_capture_host_mouse_from`（`app/state.rs:1667`）是**全局的、按焦点 pane 判定的**。API 侧则完全没有暴露终端模式的字段或方法（对 `src/api/` 全文搜 `mouse` / `bracketed` / `application_cursor` 无命中）。
+
+所以 herda 无法知道某个 pane 的应用是否开了鼠标上报。而 attach 模式下的 `Input` 是纯字节透传（`apply_terminal_attach_input` = `runtime.try_send_bytes`，`headless.rs:403`），不做 mode-aware 重编码 —— 无条件发 SGR 序列会在没开上报的 shell 里变成字面输入（`^[[<0;10;5M`），不可接受。
+
+**决定：不猜。** 阶段 1 不做自动鼠标转发，提供**每个 pane 一个显式开关**（菜单项 + 卡片控件，默认关）。打开时 herda 在该 pane 的连接上用 `Input` 发 SGR 1006 序列。用户在 htop / lazygit 里自己打开，行为完全可预测。
+
+彻底修好需要 herdr 侧新增一样东西 —— 把 `MouseCapture` 也发给 attach 客户端（改 `headless.rs:3683` 的 filter），或加一个 `pane.send_mouse` API 方法。herda 不含 herdr 代码，本方案不假定能改 herdr。
+
+**三｜kitty graphics 不发给 attach 客户端。** `frame.graphics` 的填充以 `is_app_client` 为条件（`headless.rs:4161`）。herda 目前也不渲染图形（`FrameData::graphics` 只要求解码以免错位），**无回归**。将来要做的话走 `pane.graphics.stream`（API 里已有）。
+
+**四｜外部 TUI `herdr` 客户端接进同一 session 会显示得不对。** 它会成为 foreground 并按自己的 rect 排布，但因已验证事实三，**改不动 herda 已 attach 的那些 PTY**，于是它自己画出来的 pane 尺寸与内容不符。herda 侧不受影响。明确列为非目标。
+
+## 得到的能力
+
+- **滚动输入走 `AttachScroll`（变体 6）** —— 这个变体本来就是为 attach 客户端设计的，带 `column` / `row` / `lines` / `modifiers`，`handle_terminal_attach_scroll` 要求 `ClientConnectionMode::TerminalAttach`（`headless.rs:1791`），同时处理 host scrollback 和转发给子应用，且**天然按连接寻址**，不依赖焦点。
+
+  滚动条**显示**是另一件事：帧里不带滚动偏移，thumb 位置仍需 `PaneInfo.scroll` 的三个量（`offset_from_bottom` / `max_offset_from_bottom` / `viewport_rows`，`api/schema/panes.rs:429`），继续搭现有 1.5 秒轮询的车，滚动时本地乐观更新、轮询校正。`Terminal/ScrollbarGeometry.swift` 与 `PaneInfo.scroll` 字段是第一版留下的、**在本方案里依然成立**的两件东西，保留不动。实时的 `PaneScrollChanged` 仍然不用 —— 它是 per-pane 订阅，受「订阅集一旦开始不能扩展」的限制，pane 增删时要重建连接。
+- **文本选择改为原生。** herda 手里就有 cell，可以做真正的 macOS 语义：双击选词、三击选行、拖拽扩展、Cmd+C、边缘自动滚动。这比 herdr 的 TUI 选择好。
+- **鼠标坐标天然正确。** 每个 pane 是独立 view，点击位置就是 pane 局部坐标。第一版那个「点击落到错误 pane」的已知缺陷不再存在。
+- **拖分隔线本地即时。** 拖动只改 `PaneTree` 的 ratio，60fps 无往返；PTY resize 去抖后发。
+- **删除**：`FrameSlice`、`GapProbe`、`PaneFrameRouter`、`isWholeGridFallback`、整块回退模式、`LayoutSnapshot` / `LayoutGeometry`（读 herdr rect 的部分）、以及 `RuntimePaths` 里那六个 `[ui]` 键 —— herdr 的 TUI 不再被渲染，`pane_borders` / `pane_gaps` / `pane_scrollbars` 全部失去意义。空公告 store 仍要写（没有 app 连接时它不占屏，但保留成本为零且防御未来）。
 
 ## 组件与测试
 
-高风险件全部是纯函数，按 design.md §9 的路子，不需要 PTY、窗口或 server 就能测。
-
-新增：
+按 CLAUDE.md「易错的逻辑是纯的，测试就在那里」，高风险件全是纯值类型。
 
 | 文件 | 职责 | 测试 |
 |---|---|---|
-| `Layout/LayoutSnapshot.swift` | `pane.layout` / `layout_updated` 的解码结果。平坦快照（`panes[]` + `splits[]` + `area` + `zoomed` + `focused_pane_id`），不是递归树 | 解码 fixture |
-| `Layout/LayoutGeometry.swift` | pane / split rect（cell 坐标）+ cell 尺寸 + 终端区原点 → 卡片像素 frame 与分隔线可拖区 | 纯函数：1/2/3/4 pane、多层 split、**`zoomed` 退化成单卡片铺满**（硬约束六）|
-| `Layout/FrameSlice.swift` | `GridFrame` + rect → 子 `GridFrame`（含 cursor 归属判定） | 纯函数，边界与宽字符占位 |
-| `Layout/GapProbe.swift` | 间隙格是否有非空内容（跨界 modal 启发式） | 纯函数 |
-| `Terminal/ScrollbarGeometry.swift` | `PaneScrollInfo` 三个量 → thumb 矩形 | 纯函数 |
-| `Herda/PaneGridView.swift` | 按 `LayoutGeometry` 结果摆 pane 卡片 | 不测，手动跑 |
+| `Layout/PaneTree.swift` | herda 自己的分割树：二叉，节点带方向 + ratio，叶子是 pane id。操作 `split` / `close` / `setRatio` / `zoom` | 纯值类型：分裂、关闭后父节点塌缩、ratio 边界、嵌套 |
+| `Layout/PaneTreeLayout.swift` | 树 + 容器 point 尺寸 + 间距度量 → `[paneId: CGRect]`，再 → 每 pane 的 `(cols, rows)` | 纯函数：1/2/3/4 pane、多层、余量吸收、最小尺寸下限 |
+| `Runtime/PaneConnection.swift` | 一条 socket、一个 pane、一个 `TerminalGridView`。握手、resize 去抖、帧投递、终端消失处理 | 握手序列与 resize 去抖策略可测；socket 部分不测 |
+| `Runtime/PaneSessionCoordinator.swift` | 调和树的叶子与活连接：新增开、消失关、几何变了 resize | 纯调和逻辑用假连接测 |
+| `Herda/SplitContainerView.swift` | 原生卡片 + 分隔线 + 拖拽 + 焦点环 | 不测，手动跑 + 离屏渲染验卡片 chrome |
+| `Herda/PaneCommands.swift` | 原生菜单命令 → API 调用 | 不测 |
 
-改动：`TerminalSession`（持有 layout 快照与 per-pane view）、`ApiClient`（`pane.layout` / `pane.split` / `pane.zoom` / `pane.close` / `layout.set_split_ratio` + `layout_updated` 订阅）、`ApiTypes.PaneInfo`（补 `scroll` 字段）、`RuntimePaths`（config 新键 + 空公告 store）、`ContentView`（`terminalArea` 换成 `PaneGridView`）。
+改动：`TerminalSession`（从整格客户端改成协调者，或直接被 `PaneSessionCoordinator` 取代）、`ApiClient`（`pane.split` / `pane.close` / `pane.focus` / `pane.send_keys` / `pane.send_text`）、`ContentView`（`terminalArea` 换成 `SplitContainerView`）。
 
-坐标换算（pane 局部 → 全局 grid）也是纯函数，与 `FrameSlice` 互为逆运算，适合一起测。
+`TerminalGridView`、`GlyphCache`、`CellGeometry`、`TerminalFont`、`KeyMap`、`MarkedText`、`ScrollAccumulator`、`WireDecoder` **一行不改**。
 
-## 实测结论（2026-08-12）
+## 阶段划分（粗）
 
-四项全部对 herda 自己的隔离 server 实测，herdr 0.8.0。`pane.layout` 的原始响应逐字节内联在 `LayoutSnapshotTests.realServerResponse`（跟随项目既有的 golden fixture 约定 —— 见 `WireDecoderTests.swift:6`，全部内联而非外部文件）；重抓命令是 `herdr pane layout --current`。
+阶段边界的依据：**每个阶段结束时 app 必须可用。** 由于本方案一上手就拆掉 app 连接，herdr 的键盘操作会立刻消失，所以阶段 1 必须同时补上最基本的原生命令，否则中间态是「能看不能操作」。
 
-**1｜rect 与实际内容逐格对齐 —— 成立。** 三 pane 布局给出 `p1 x=0 w=34` / `p3 x=35 w=33` / `p2 x=69 w=45`，间隙恰好一格落在第 34 与 68 列。在 p3 里打印 40 字符的标尺，输出折成 `33 + 7`，即 **PTY 宽度就是 `rect.width`**。加上从源码确认的两步恒等变换（硬约束一），`rect == inner_rect == PTY 尺寸 == 渲染区域` 得到实测支持。`scroll.viewport_rows` 为 40，与 `rect.height` 一致。
+1. **单 pane 走通新通道。** `PaneConnection` + 握手 + resize，一个 pane 铺满终端区，删掉 app 渲染连接。验收：输入、输出、resize、滚动都对。
+2. **`PaneTree` + `PaneTreeLayout` + 原生卡片网格。** 多 pane 渲染，原生间距/圆角/焦点环（这次数值不受一格约束，直接用 `ChromeMetrics` 的 8pt 网格）。
+3. **原生命令与菜单。** Cmd+D / Cmd+Shift+D 分割、Cmd+W 关闭、焦点切换、zoom，全部走 API + 菜单栏。
+4. **交互补齐。** 拖分隔线、原生文本选择、per-pane 鼠标转发开关。
+5. **原生替换剩余 modal。** 按上表逐个来，每步可用。
 
-**2｜间隙格是否空白 —— 部分验证。** 间隙的存在已确认（rect 之间恰好一格）。**但那一格的内容还没有直接看过** —— CLI 的 `pane read` 只能读单个 pane，看不到整块 grid 的那一列。这一项要等客户端能拿到整块 grid 之后才好验证（计划三），或者另写探针。跨界启发式（`GapProbe`）因此仍是待验证的假设，不是已验证的事实。
+真正的实施计划由 writing-plans 产出，上面只是形状。
 
-不过字符边框的消失不需要另外验证：`apply_pane_chrome` 的 shrink 分支条件是 `multi_pane && pane_gaps && !pane_borders`（`src/ui/panes.rs:103`），borders 判定是 `!multi_pane || !pane_borders` 时取 `Borders::NONE`（`:112`）。观察到 shrink 生效 ⟹ `!pane_borders` 为真 ⟹ `Borders::NONE` 必然成立。两者是同一条件的两个后果。
+## 待定项（计划阶段实测）
 
-**3｜`confirm_close` 覆盖范围 —— API 路径确认，键盘路径未验证。** `pane.close` 经 API 立即返回 `{"type":"ok"}`，pane 列表少一个，无确认框。键盘路径要在窗口里按 prefix key，而 CLAUDE.md 禁止 GUI 键盘自动化。对本方案无影响：herda 的关闭走 API。
+这几条不影响架构选择，但会影响实现细节，必须实测而非推断：
 
-**4｜workspace 级 zoom —— 从 API 不可达。** `herdr workspace --help` 没有 zoom 子命令，zoom 只有 `pane zoom`（tab 级）。snapshot 暴露的 `tab.zoomed` 因此充分，硬约束六里那条附注可以收掉。
+1. **attach 连接会收到哪些 `ServerMessage`。** 已知有帧和 `ServerShutdown`（终端消失时 reason 为 `terminal attach ended: ...`，`headless.rs:4125`）。`Notify` / `SetTitle` / `ReloadSoundConfig` 是否也发、`Handshake` 回什么尺寸，要抓一次真实字节。
+2. **zoom 时非焦点 pane 的 PTY 尺寸怎么处理。** 保持原尺寸最简单，但焦点 pane 铺满后要 resize；退出 zoom 再改回去会让子应用重排两次。可能更好的做法是 zoom 期间不动任何 PTY 尺寸，只改渲染。要实测子应用的观感。
+3. **`pane.send_keys` 的按键名词表。** `parse_api_key` 的接受集合要枚举出来，与 herda 的 `KeyMap` 对齐；不在集合里的键返回 `invalid_key`。
+4. **输入延迟。** `pane.send_keys` 是 JSON 请求，本地 unix socket 上应远低于一帧，但要实测确认连打不掉字、不乱序（同一 socket 单流，顺序应有保证），并确认不等响应（fire-and-forget）是否安全。
+5. **`herdr pane read` 等 CLI 互操作在 attach 锁定下是否照常。** 预期照常（读路径不 resize），但值得一条实测。
 
-zoom 行为本身**完全符合硬约束六**：`zoomed: true` 时 `panes` 仍报告全部三个 pane、rect 仍是未 zoom 的布局，而实际只渲染焦点 pane 占满 `area`。
+## 需要更正的既有记录
 
-## 实测推翻的两处假设
+`docs/design.md` **已不在仓库中**（`8c314ac chore: rm old plans` 同期删除）。第一版 spec 里那节「design.md 需要更正的记录」因此悬空，本文不再引用 design.md 的任何章节编号。
 
-**一｜`pane.layout` 的 `result` 有一层 `layout` 包装。** `result` 的键是 `["layout", "type"]`，不是 `PaneLayoutSnapshot` 本身：
+如果 design.md 要恢复（`git checkout 8c314ac^ -- docs/design.md`），需要更正的至少有：§10「明确不做：原生 split 布局」（本文推翻）、§3 决策表「server 排版 + 原生外壳」（本文推翻其前提）、以及「herdr 无 channel 可 retheme 运行中的 server」这条 —— `server.reload_config` 存在（`app/api.rs:921` → `app/mod.rs:1334` → `apply_live_config`，其中有 `theme_runtime` 重建与 `refresh_effective_app_theme()`），运行中可换主题。
 
-```json
-{"result":{"layout":{"area":{...},"panes":[...],"splits":[...]},"type":"pane_layout"}}
-```
-
-所以 `ApiClient` 需要一个 envelope 类型，与 `SessionSnapshotEnvelope` 同一个套路。`layout_updated` 事件的 `data` 里也是 `{"layout": ...}`（schema 的 `EventData::LayoutUpdated { layout }` 与此一致）。
-
-**二｜split id 不能用「间隙落在 `split.rect` 内」来匹配。** 嵌套 split 的 rect 是包含关系 —— 实测的两层是 `split_0_root`(0..113) 与 `split_1_0`(0..68)：
-
-- 第 34 列间隙（p1|p3）：两个 rect 都包含它，按数组顺序取首个会得到 `split_0_root`，错。
-- 第 68 列间隙（p3|p2）：`split_1_0` 的 rect 是 0..68，**也包含 68**，所以「取最小包含者」同样选错。
-
-正确规则是**取 rect 同时完整包含间隙两侧两个 pane 的最小 split**：第 34 列两侧 p1(0..33)/p3(35..67) 都在 `split_1_0` 内 → 选它；第 68 列两侧 p3(35..67)/p2(69..113)，`split_1_0` 不含 p2 → 只有 `split_0_root` 合格。
-
-这顺带证实了「不用 `ratio` 反算分隔线位置」的判断：`split_1_0` 的 `ratio=0.5`、宽 69，`floor(69×0.5)=34`，间隙确实在 34；但 `split_0_root` 的 `ratio=0.6052632`、宽 114，`floor(114×0.6052632)=69`，而间隙在 68。同一公式对两层给出不同偏移。
-
-## design.md 需要更正的记录
-
-**§10「明确不做：原生 split 布局」** —— 本文推翻。改为记录选定方案，并保留两个被否决方案的理由。
-
-**§3 决策表末尾关于 retheme 的记录。** design.md 写「herdr 暴露无 channel 来 retheme 运行中的 server」，`TerminalSession.swift:256` 起的注释同样基于这个判断。实际上 `server.reload_config` 存在（`src/app/api.rs:921` → `reload_config` → `src/app/mod.rs:1334` → `apply_config_from_disk(true)` → `apply_live_config`），而 `apply_live_config` 里有 `self.state.theme_runtime = theme_runtime_config(...)` + `self.refresh_effective_app_theme()`。**运行中的 server 可以换主题。**
-
-原记录的结论「invisible in practice」仍然成立（herdr sidebar 是 hidden 的），但前提错了。而且这条能力对本方案有实际价值：`pane_borders` / `pane_gaps` / `pane_scrollbars` 都是 config 项，运行时切换要靠它；阶段 2 的原生设置面板也依赖它。
-
-**§2 关于 `ClientLaunchMode` / `AttachTerminal` / `ObserveTerminal` / `ControlTerminal` 支持 per-pane 订阅的记录** —— 成立，且现在有了字节级的变体编号（本文「被否决的方案一」）。建议把编号记进 §5，即使当前方案不用 —— 下次考虑 per-pane 连接时不必重新查一遍。
+`docs/superpowers/plans/2026-08-12-native-split-0{1,2,3,4}-*.md` 四份计划实现的是第一版方案，随本文作废。
