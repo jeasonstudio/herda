@@ -32,7 +32,7 @@
 - Modify: `Sources/HerdaKit/Runtime/RuntimePaths.swift:47-75`
 - Test: `Tests/HerdaKitTests/RuntimePathsTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 追加到 `RuntimePathsTests.swift`（放在 `testConfigContentsHidesTheTabRowForSingleTabWorkspaces` 之后）：
 
@@ -59,13 +59,13 @@ func testPaneChromeKeysLiveInTheUiSection() {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "testConfigContentsTurnsOffHerdrsPaneChrome|testPaneChromeKeysLiveInTheUiSection|failed"`
 
 Expected: 两个测试 FAIL（`XCTAssertTrue failed`），因为 `configContents` 还没有这些键。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 把 `RuntimePaths.swift:63-74` 的 TOML 字面量替换为下面这份（注释块 `:48-62` 之后追加一段说明，不要删原有注释）：
 
@@ -109,13 +109,13 @@ Expected: 两个测试 FAIL（`XCTAssertTrue failed`），因为 `configContents
         """
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过（此前 320 个测试 + 新增 2 个）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Runtime/RuntimePaths.swift Tests/HerdaKitTests/RuntimePathsTests.swift
@@ -137,7 +137,7 @@ than the rect pane.layout reports, so every slice would be off by a column."
 - Modify: `Sources/HerdaKit/Runtime/RuntimePaths.swift`（同一个 TOML 字面量）
 - Test: `Tests/HerdaKitTests/RuntimePathsTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```swift
 func testConfigContentsSuppressesHerdrsOwnModals() {
@@ -151,13 +151,13 @@ func testConfigContentsSuppressesHerdrsOwnModals() {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "testConfigContentsSuppressesHerdrsOwnModals|failed"`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `[ui]` 段的 `pane_scrollbars = false` 之后追加三行：
 
@@ -181,13 +181,13 @@ Expected: FAIL。
         // 让这三个键作为一组出现 —— 少一个就会有一类弹窗漏进来。
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Runtime/RuntimePaths.swift Tests/HerdaKitTests/RuntimePathsTests.swift
@@ -210,7 +210,7 @@ stage 2."
 
 背景见 spec 硬约束五：启动 mode 决定（herdr `src/app/mod.rs:500`）里 `ProductAnnouncement` 紧跟 `Onboarding`，而 `load_unseen_for_current_version` 只看 store 文件、没有配置项能关。`AnnouncementStore` 的两个字段都带 `#[serde(default)]`（`src/product_announcements.rs:40-43`），所以 `latest` 为 null 时 `load_unseen_from_path` 直接返回 nil。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```swift
 func testAnnouncementStoreLivesUnderHerdrSubdirectoryOfStateHome() {
@@ -255,13 +255,13 @@ func testWriteConfigAlsoWritesTheAnnouncementStore() throws {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "announcementStore|writeEmptyAnnouncementStore|error:" | head`
 
 Expected: 编译失败 —— `value of type 'RuntimePaths' has no member 'announcementStore'`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `RuntimePaths.swift` 的 `clientSocket`（`:41`）之后插入：
 
@@ -307,13 +307,13 @@ Expected: 编译失败 —— `value of type 'RuntimePaths' has no member 'annou
     }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Runtime/RuntimePaths.swift Tests/HerdaKitTests/RuntimePathsTests.swift
@@ -338,25 +338,25 @@ the written JSON parses."
 
 这一步不改代码，只确认 Task 1–3 的配置确实在 server 启动前写入。如果发现顺序不对，才需要改。
 
-- [ ] **Step 1: 找到 writeConfig 的调用点**
+- [x] **Step 1: 找到 writeConfig 的调用点**
 
 Run: `grep -rn "writeConfig" Sources/`
 
 Expected: 至少两处 —— `TerminalSession.setTheme`（`:264` 附近，运行时切主题）和 `HerdrRuntime.start` 内部或 `TerminalSession.start` 序列里。
 
-- [ ] **Step 2: 确认 spawn 之前的那一次**
+- [x] **Step 2: 确认 spawn 之前的那一次**
 
 Run: `grep -n "writeConfig\|Process\|launch\|run()" Sources/HerdaKit/Runtime/HerdrRuntime.swift | head -20`
 
 Expected: `writeConfig`（或 `paths.writeConfig`）出现在启动 `Process` 之前。
 
-- [ ] **Step 3: 若顺序正确,记录并跳过**
+- [x] **Step 3: 若顺序正确,记录并跳过**
 
 在本计划末尾的「实测记录」区写一行：`config 在 spawn 前落盘：确认于 <文件:行号>`。
 
 若顺序不正确（config 在 spawn 之后写），则在 `HerdrRuntime.start` 的 `Process` 启动之前插入 `try paths.writeConfig(themeName: themeName)` 并补一个测试断言调用顺序 —— 但先运行 Step 1–2 确认，不要预先改。
 
-- [ ] **Step 4: 提交（仅当有改动）**
+- [x] **Step 4: 提交（仅当有改动）**
 
 ```bash
 git add Sources/HerdaKit/Runtime/HerdrRuntime.swift
@@ -561,7 +561,9 @@ of mistake CLAUDE.md's fixture rule exists to prevent."
 
 > 执行 Task 5–7 时填写。计划二的解码器依赖这里的原始输出。
 
-**config 在 spawn 前落盘（Task 4）：**
+**config 在 spawn 前落盘（Task 4）：** 顺序正确，无需改动。`HerdrRuntime.start(themeName:)` 的第一行就是 `try paths.writeConfig(themeName:)`（`HerdrRuntime.swift:59`），`try process.run()` 在 `:76`。Task 3 把空公告 store 挂进了 `writeConfig`，所以两个文件都在 spawn 之前落盘。
+
+另一个调用点是 `TerminalSession.swift:265` 的 `setTheme`（运行时切主题），不影响启动顺序；它会顺带重写一次空公告 store，幂等无害。
 
 **Task 5 — 字符边框与间隙：**
 
