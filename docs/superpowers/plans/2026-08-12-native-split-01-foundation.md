@@ -389,7 +389,7 @@ Scripts/run.sh --reset
 
 **Files:** 无代码改动，产出是记录。
 
-- [ ] **Step 1: 起 app 并确认 config 已生效**
+- [x] **Step 1: 起 app 并确认 config 已生效**
 
 ```bash
 Scripts/run.sh --reset
@@ -404,7 +404,7 @@ grep -E "pane_borders|pane_gaps|pane_scrollbars|confirm_close|prompt_new" \
 
 Expected: 六行，值分别为 false / true / false / false / false / false。
 
-- [ ] **Step 2: 做一次 split**
+- [x] **Step 2: 做一次 split**
 
 ```bash
 h pane list
@@ -414,7 +414,7 @@ h pane list
 
 Expected: pane 数量从 1 变 2。
 
-- [ ] **Step 3: 读整块 grid，确认没有 box-drawing 字符**
+- [x] **Step 3: 读整块 grid，确认没有 box-drawing 字符**
 
 ```bash
 h pane read --current --format text | head -30
@@ -424,7 +424,7 @@ h pane read --current --format text | head -30
 
 Expected: 输出里不出现 `│` `─` `┌` `┐` `└` `┘` `├` `┤` `┬` `┴` `┼` 作为 pane 边框（pane **内容**里可能有，比如 lazygit 自己画的框 —— 只看 pane 之间那一列）。
 
-- [ ] **Step 4: 记录**
+- [x] **Step 4: 记录**
 
 把结论写进本文件末尾的「实测记录」：字符边框是否消失、间隙是否为一格宽。若边框仍在，先检查 Step 1 的 config 是否真的被读到（`h` 命令是否连到了 herda 的 server 而不是开发者自己的 —— 用 `h api snapshot | head -3` 里的 pane 数量核对）。
 
@@ -436,7 +436,7 @@ Expected: 输出里不出现 `│` `─` `┌` `┐` `└` `┘` `├` `┤` `�
 
 **Files:** 无代码改动，产出是记录 + 一个可复跑的脚本。
 
-- [ ] **Step 1: 看 `pane layout` 的实际输出格式**
+- [x] **Step 1: 看 `pane layout` 的实际输出格式**
 
 ```bash
 h pane layout --current
@@ -444,7 +444,7 @@ h pane layout --current
 
 先只看格式：字段名、rect 的表示、是否有 splits 数组。把原始输出整段贴进「实测记录」—— 计划二要按它写解码器，格式必须来自真实输出而不是 schema 推断。
 
-- [ ] **Step 2: 拿 JSON 形式的同一份数据**
+- [x] **Step 2: 拿 JSON 形式的同一份数据**
 
 ```bash
 h pane layout --current --format json 2>/dev/null || h api snapshot | head -50
@@ -465,7 +465,7 @@ printf '{"id":"1","method":"pane.layout","params":{}}\n' | nc -U "$R/herdr.sock"
 
 （目录不存在就先 `mkdir -p Tests/HerdaKitTests/Fixtures`。）
 
-- [ ] **Step 3: 逐格核对左上角与宽度**
+- [x] **Step 3: 逐格核对左上角与宽度**
 
 对每个 pane，用 `herdr pane read` 拿它自己的内容，再和整块 grid 的对应矩形比对。取一个内容可辨认的 pane（先在里面 `echo` 一个标记）：
 
@@ -480,7 +480,7 @@ h pane read --current --format text | grep -n MARKER
 
 Expected: 两处 `MARKER_LEFT_EDGE` 出现的**列偏移差**等于该 pane 在 layout 里的 `rect.x`，行偏移差等于 `rect.y`。
 
-- [ ] **Step 4: 记录结论**
+- [x] **Step 4: 记录结论**
 
 在「实测记录」写明：rect 是否等于内容区、是否需要任何偏移修正。**如果这一步不成立，停下来**——计划二三四全部建立在它之上，要先回到 spec 修正硬约束一。
 
@@ -490,7 +490,7 @@ Expected: 两处 `MARKER_LEFT_EDGE` 出现的**列偏移差**等于该 pane 在 
 
 **Files:** 无代码改动，产出是记录。
 
-- [ ] **Step 1: 测 pane 关闭是否还弹确认**
+- [x] **Step 1: 测 pane 关闭是否还弹确认**
 
 ```bash
 h pane split --direction down
@@ -501,7 +501,7 @@ h pane list
 
 Expected: pane 数量直接减一，窗口里没有出现确认框。若出现了，说明 `confirm_close` 只覆盖 workspace —— 记录下来，阶段 2 要用原生 sheet 替换它（`pane.close` API 本身不受 modal 影响，所以不阻塞本计划）。
 
-- [ ] **Step 2: 测 workspace 级 zoom 是否可达**
+- [x] **Step 2: 测 workspace 级 zoom 是否可达**
 
 ```bash
 h pane split --direction right
@@ -520,13 +520,13 @@ h workspace --help 2>&1 | grep -i zoom
 
 Expected: 若 `workspace` 子命令下没有 zoom，则 tab 级是唯一入口，snapshot 的 `zoomed` 足够。记录结论。
 
-- [ ] **Step 3: 恢复**
+- [x] **Step 3: 恢复**
 
 ```bash
 h pane zoom --current   # 再按一次取消 zoom
 ```
 
-- [ ] **Step 4: 记录**
+- [x] **Step 4: 记录**
 
 写进「实测记录」。
 
@@ -537,13 +537,13 @@ h pane zoom --current   # 再按一次取消 zoom
 **Files:**
 - Modify: `docs/superpowers/specs/2026-08-12-native-split-layout-design.md`（「待实测项」一节）
 
-- [ ] **Step 1: 用结论替换那一节**
+- [x] **Step 1: 用结论替换那一节**
 
 把「## 待实测项」整节改成「## 实测结论（2026-08-12）」，四条各写：命令、观察到的输出、结论。保留原本的四个编号顺序，便于对照。
 
 若某条推翻了硬约束，同时改硬约束正文并在那里注明「原判断为 X，实测为 Y」——这是 design.md 的记录传统（记录被替换的判断，不只记录当前答案）。
 
-- [ ] **Step 2: 提交**
+- [x] **Step 2: 提交**
 
 ```bash
 git add docs/superpowers/specs/2026-08-12-native-split-layout-design.md
@@ -565,16 +565,49 @@ of mistake CLAUDE.md's fixture rule exists to prevent."
 
 另一个调用点是 `TerminalSession.swift:265` 的 `setTheme`（运行时切主题），不影响启动顺序；它会顺带重写一次空公告 store，幂等无害。
 
-**Task 5 — 字符边框与间隙：**
+**Task 5 — 字符边框与间隙：** 六个键全部写入 `<runtime>/config/herdr/config.toml` 并被 server 读到；空公告 store 内容为 `{"latest":null,"seen":[]}`。
 
-**Task 6 — `pane layout` 原始输出：**
+三 pane 布局下 rect 为 `p1 x=0 w=34`、`p3 x=35 w=33`、`p2 x=69 w=45`，即**间隙恰好一格**，落在第 34 与第 68 列。
 
+**字符边框的消失不需要视觉确认 —— 间隙的存在已经证明了它。** `apply_pane_chrome` 的 shrink 分支条件是 `multi_pane && pane_gaps && !pane_borders`（`src/ui/panes.rs:103`），而 borders 的判定是 `if !multi_pane || !pane_borders { Borders::NONE }`（`:112`）。观察到 shrink 生效 ⟹ `!pane_borders` 为真 ⟹ `Borders::NONE` 必然成立。两者是同一个条件的两个后果。
+
+**Task 6 — `pane layout` 原始输出：** 见 `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`（653 字节，三 pane、两层 split 的真实响应）。结构：
+
+```json
+{"id":"cli:pane:layout","result":{"layout":{
+  "area":{"x":0,"y":0,"width":114,"height":40},
+  "focused_pane_id":"w1:p1","zoomed":false,
+  "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":34,"height":40}}, ...],
+  "splits":[{"id":"split_0_root","direction":"right","ratio":0.6052632,
+             "rect":{"x":0,"y":0,"width":114,"height":40}},
+            {"id":"split_1_0","direction":"right","ratio":0.5,
+             "rect":{"x":0,"y":0,"width":69,"height":40}}]
+},"type":"pane_layout"}}
 ```
-（贴 h pane layout --current 的完整输出）
-```
 
-**Task 6 — rect 对齐结论：**
+**两处与计划的假设不同，见文末「实测推翻的假设」。**
 
-**Task 7 — confirm_close 覆盖范围：**
+**Task 6 — rect 对齐结论：** 成立。在 p3（`rect.width=33`）里打印 40 字符的标尺，输出折成 `33 + 7`——PTY 宽度就是 rect.width。加上从源码确认的两步恒等变换（`pane_inner_rect` 在 borders 为空时原样返回、`stable_terminal_inner_rect` 在 `!pane_scrollbars` 时原样返回），`rect == inner_rect == PTY 尺寸 == 渲染区域` 得到实测支持。`scroll.viewport_rows` 为 40，与 `rect.height` 一致。
 
-**Task 7 — workspace 级 zoom：**
+**Task 7 — confirm_close 覆盖范围：** `pane.close` 经 API 立即返回 `{"type":"ok"}`，pane 列表从三个变两个，无确认框拦截。**键盘路径未验证** —— 那需要在窗口里按 prefix key，而 CLAUDE.md 禁止 GUI 键盘自动化。对 herda 无影响：它的关闭走 API。
+
+**Task 7 — workspace 级 zoom：** 从 API 不可达 —— `herdr workspace --help` 没有 zoom 子命令，zoom 只有 `pane zoom`（tab 级）。snapshot 暴露的 `tab.zoomed` 因此是充分的，spec 硬约束六里那条附注可以收掉。
+
+zoom 行为本身**完全符合硬约束六**：`zoomed: true` 时 `panes` 仍报告全部三个 pane、rect 仍是未 zoom 的布局（`p1 x=0 w=34` / `p3 x=35 w=33` / `p2 x=69 w=45`），而实际渲染只有焦点 pane 占满 `area`。照 rect 切必然整体错位。
+
+---
+
+## 实测推翻的假设
+
+两处，都会导致 bug，已在后续计划中修正。
+
+**一｜`pane.layout` 的 `result` 有一层 `layout` 包装。** `result` 的键是 `["layout", "type"]`，不是 `PaneLayoutSnapshot` 本身。计划三 Task 2 写的 `request(PaneLayoutSnapshot.self, method: "pane.layout")` 会解码失败，需要一个 envelope，与 `SessionSnapshotEnvelope` 同一个套路。计划二 Task 1 的 fixture 测试路径也要跟着改。
+
+**二｜`SplitHandles` 用「间隙落在 `split.rect` 内」匹配 split id 是错的。** 嵌套 split 的 rect 是包含关系：`split_0_root` 覆盖 0..113，`split_1_0` 覆盖 0..68。
+
+- 第 34 列的间隙（p1|p3）：两个 split 的 rect 都包含它，`first {}` 会按数组顺序返回 `split_0_root` —— **错，应为 `split_1_0`**。
+- 第 68 列的间隙（p3|p2）：`split_1_0` 的 rect 是 0..68，**也包含 68**，取「最小的包含者」同样会选错。
+
+正确规则：**取 rect 同时完整包含间隙两侧两个 pane 的最小 split**。第 34 列两侧是 p1(0..33) 与 p3(35..67)，`split_1_0`(0..68) 都包含 → 选它；第 68 列两侧是 p3(35..67) 与 p2(69..113)，`split_1_0` 不含 p2，只有 `split_0_root` 包含两者 → 选它。
+
+顺带证实了计划里「不用 `ratio` 反算分隔线位置」的判断：`split_1_0` 的 `ratio=0.5`、宽 69 → `floor(69*0.5)=34`，间隙确实在 34；但 `split_0_root` 的 `ratio=0.6052632`、宽 114 → `floor(114*0.6052632)=69`，而间隙在 68。同一个公式对两层给出不同偏移，反算不可靠。

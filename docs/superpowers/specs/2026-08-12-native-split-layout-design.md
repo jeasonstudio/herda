@@ -109,7 +109,7 @@ rect 之间那一格空隙是 herda 用来画间距和描边的位置，不是�
 
 所以 `zoomed == true` 时 herda 必须只渲染 `focused_pane_id` 一张卡片、铺满整个终端区，忽略 `panes[]` 里的所有 rect。照着 rect 切会拿多 pane 的矩形去切一块只有单 pane 内容的 grid，画面整体错位。
 
-（`src/ui/panes.rs:235` 还有一处 `ws.zoomed` 的 workspace 级 zoom 走同样逻辑，但 snapshot 只暴露 tab 级的那个。若 workspace 级 zoom 也可达，需要另找信号 —— 列入待实测。）
+（`src/ui/panes.rs:235` 还有一处 `ws.zoomed` 的 workspace 级 zoom 走同样逻辑，snapshot 只暴露 tab 级的那个。**实测确认 workspace 级从 API 不可达** —— `herdr workspace` 没有 zoom 子命令，zoom 只有 `pane zoom`，所以 `tab.zoomed` 是充分的。）
 
 ## config 变更
 
@@ -195,14 +195,40 @@ layout 快照必须在 app 连接 hello 完成之后取，否则 rect 是按 80�
 
 坐标换算（pane 局部 → 全局 grid）也是纯函数，与 `FrameSlice` 互为逆运算，适合一起测。
 
-## 待实测项
+## 实测结论（2026-08-12）
 
-按 CLAUDE.md 的规矩，这三项要拿真实帧和真实服务器验证，不能靠读代码推断。建议作为实施第一步。
+四项全部对 herda 自己的隔离 server 实测，herdr 0.8.0。原始响应存为 `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`。
 
-1. **`pane.layout` 的 rect 与实际 grid 内容是否逐格对齐。** 用 `herdr pane read` 拿地面真相，比对切出来的子帧。这是整个方案的地基，错一格就会让每个 pane 的内容平移。
-2. **`pane_borders = false, pane_gaps = true` 下间隙格是否确实空白。** 决定跨界启发式成立与否。注意 `show_agent_labels_on_pane_borders`（`src/config/model.rs:846`）默认 false，但要确认关掉 borders 后它不会往别处画。
-3. **`confirm_close` 是否同时覆盖 pane 与 workspace 的关闭确认。** 文档措辞与 `navigate.rs:586` 的用法不一致。
-4. **workspace 级 zoom 是否可达，以及可达时如何得知。** `src/ui/panes.rs:235` 的 `ws.zoomed` 与 `:179` 的 `tab.zoomed` 是两个层级，而 snapshot 只暴露后者（硬约束六）。若前者能被触发，需要另找信号，否则那种状态下会错位。
+**1｜rect 与实际内容逐格对齐 —— 成立。** 三 pane 布局给出 `p1 x=0 w=34` / `p3 x=35 w=33` / `p2 x=69 w=45`，间隙恰好一格落在第 34 与 68 列。在 p3 里打印 40 字符的标尺，输出折成 `33 + 7`，即 **PTY 宽度就是 `rect.width`**。加上从源码确认的两步恒等变换（硬约束一），`rect == inner_rect == PTY 尺寸 == 渲染区域` 得到实测支持。`scroll.viewport_rows` 为 40，与 `rect.height` 一致。
+
+**2｜间隙格是否空白 —— 部分验证。** 间隙的存在已确认（rect 之间恰好一格）。**但那一格的内容还没有直接看过** —— CLI 的 `pane read` 只能读单个 pane，看不到整块 grid 的那一列。这一项要等客户端能拿到整块 grid 之后才好验证（计划三），或者另写探针。跨界启发式（`GapProbe`）因此仍是待验证的假设，不是已验证的事实。
+
+不过字符边框的消失不需要另外验证：`apply_pane_chrome` 的 shrink 分支条件是 `multi_pane && pane_gaps && !pane_borders`（`src/ui/panes.rs:103`），borders 判定是 `!multi_pane || !pane_borders` 时取 `Borders::NONE`（`:112`）。观察到 shrink 生效 ⟹ `!pane_borders` 为真 ⟹ `Borders::NONE` 必然成立。两者是同一条件的两个后果。
+
+**3｜`confirm_close` 覆盖范围 —— API 路径确认，键盘路径未验证。** `pane.close` 经 API 立即返回 `{"type":"ok"}`，pane 列表少一个，无确认框。键盘路径要在窗口里按 prefix key，而 CLAUDE.md 禁止 GUI 键盘自动化。对本方案无影响：herda 的关闭走 API。
+
+**4｜workspace 级 zoom —— 从 API 不可达。** `herdr workspace --help` 没有 zoom 子命令，zoom 只有 `pane zoom`（tab 级）。snapshot 暴露的 `tab.zoomed` 因此充分，硬约束六里那条附注可以收掉。
+
+zoom 行为本身**完全符合硬约束六**：`zoomed: true` 时 `panes` 仍报告全部三个 pane、rect 仍是未 zoom 的布局，而实际只渲染焦点 pane 占满 `area`。
+
+## 实测推翻的两处假设
+
+**一｜`pane.layout` 的 `result` 有一层 `layout` 包装。** `result` 的键是 `["layout", "type"]`，不是 `PaneLayoutSnapshot` 本身：
+
+```json
+{"result":{"layout":{"area":{...},"panes":[...],"splits":[...]},"type":"pane_layout"}}
+```
+
+所以 `ApiClient` 需要一个 envelope 类型，与 `SessionSnapshotEnvelope` 同一个套路。`layout_updated` 事件的 `data` 里也是 `{"layout": ...}`（schema 的 `EventData::LayoutUpdated { layout }` 与此一致）。
+
+**二｜split id 不能用「间隙落在 `split.rect` 内」来匹配。** 嵌套 split 的 rect 是包含关系 —— 实测的两层是 `split_0_root`(0..113) 与 `split_1_0`(0..68)：
+
+- 第 34 列间隙（p1|p3）：两个 rect 都包含它，按数组顺序取首个会得到 `split_0_root`，错。
+- 第 68 列间隙（p3|p2）：`split_1_0` 的 rect 是 0..68，**也包含 68**，所以「取最小包含者」同样选错。
+
+正确规则是**取 rect 同时完整包含间隙两侧两个 pane 的最小 split**：第 34 列两侧 p1(0..33)/p3(35..67) 都在 `split_1_0` 内 → 选它；第 68 列两侧 p3(35..67)/p2(69..113)，`split_1_0` 不含 p2 → 只有 `split_0_root` 合格。
+
+这顺带证实了「不用 `ratio` 反算分隔线位置」的判断：`split_1_0` 的 `ratio=0.5`、宽 69，`floor(69×0.5)=34`，间隙确实在 34；但 `split_0_root` 的 `ratio=0.6052632`、宽 114，`floor(114×0.6052632)=69`，而间隙在 68。同一公式对两层给出不同偏移。
 
 ## design.md 需要更正的记录
 
