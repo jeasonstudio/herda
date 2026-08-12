@@ -6,10 +6,10 @@ struct ContentView: View {
     @StateObject private var session = TerminalSession()
 
     var body: some View {
-        // 两张卡片,间距而不是分隔线。顶边比其余三边深:那条 titlebar 带
-        // 仍然持有窗口拖动手势(见 ChromeMetrics.cardTopInset),红绿灯也
-        // 落在带内,浮在窗口底色而非卡片上。
-        HStack(spacing: ChromeMetrics.cardGap) {
+        // 只有终端浮起。sidebar 与窗口底同一层、同一底色,所以它贴着窗口
+        // 左边缘、铺满整个高度,由自己的内容让开红绿灯(见
+        // ChromeMetrics.contentTopInset)。窗口只有一个"面",卡片浮在它上面。
+        HStack(spacing: 0) {
             // Every sidebar action hands keyboard focus back: SwiftUI's Button
             // and Menu take first responder when clicked, and until it returns
             // the terminal silently ignores typing.
@@ -30,14 +30,14 @@ struct ContentView: View {
                 }
             )
             .frame(width: 224)
-            .cardSurface(fill: session.theme.chrome.sidebarBackground, theme: session.theme)
 
             terminalArea
                 .cardSurface(fill: session.theme.chrome.panelBackground, theme: session.theme)
+                .padding(.leading, ChromeMetrics.cardGap)
+                .padding(.top, ChromeMetrics.contentTopInset)
+                .padding(.trailing, ChromeMetrics.cardInset)
+                .padding(.bottom, ChromeMetrics.cardInset)
         }
-        .padding(.top, ChromeMetrics.cardTopInset)
-        .padding(.horizontal, ChromeMetrics.cardInset)
-        .padding(.bottom, ChromeMetrics.cardInset)
         .background(session.theme.chrome.windowBackground.color)
         .ignoresSafeArea(.container, edges: .top)
         // System-drawn chrome — menus, scrollers, spinners — reads the appearance,

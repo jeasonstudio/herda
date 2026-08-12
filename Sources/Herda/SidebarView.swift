@@ -55,9 +55,12 @@ struct SidebarView: View {
 
     /// A hairline with a grabbable band around it. The band is real layout rather
     /// than an overlay so the drag target is as tall as it looks clickable.
+    ///
+    /// 线色相对 `windowBackground` 派生 —— sidebar 现在就是窗口底那一面。用
+    /// `hairline`(相对 `panelBackground`)会在亮色主题下与它撞色到看不见。
     private func divider(in total: CGFloat) -> some View {
         Rectangle()
-            .fill(theme.chrome.hairline.color)
+            .fill(theme.chrome.hairline(on: theme.chrome.windowBackground).color)
             .frame(height: 1)
             .frame(height: 9)
             .contentShape(Rectangle())
@@ -91,8 +94,10 @@ struct SidebarView: View {
     private var spacesSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader("SPACES") { EmptyView() }
-                // 红绿灯现在落在窗口底色上、卡片顶边之上,侧栏不再让位。
-                .padding(.top, 12)
+                // sidebar 与窗口底同层、铺满高度,所以红绿灯又压在它上面了,
+                // 第一行必须让开。与终端卡片的顶边同一个值,两者对齐成一条
+                // 水平线(见 ChromeMetrics.contentTopInset)。
+                .padding(.top, ChromeMetrics.contentTopInset)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(model.workspaces) { workspace in
@@ -274,8 +279,9 @@ struct SidebarView: View {
     /// settings would go.
     private var footer: some View {
         VStack(spacing: 0) {
+            // 同 divider:相对 windowBackground 派生。
             Rectangle()
-                .fill(theme.chrome.hairline.color)
+                .fill(theme.chrome.hairline(on: theme.chrome.windowBackground).color)
                 .frame(height: 1)
 
             // The swatch sits outside the menu: a borderless menu draws its own

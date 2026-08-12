@@ -48,11 +48,24 @@ extension ChromePalette {
         return panelBackground.mixed(with: ThemeColor(0, 0, 0), isDark ? 0.34 : 0.10)
     }
 
-    /// Hairline rules: the sidebar/terminal seam and the footer separator.
-    /// 双卡片形态下它还多一个职责:卡片的描边。`terminal` 主题的
-    /// `panelBackground` 是纯黑,`windowBackground` 与它同色,那时候把卡片
-    /// 托起来的只有这条线和阴影。
-    public var hairline: ThemeColor { panelBackground.mixed(with: text, 0.16) }
+    /// 画在 `surface` 上的分隔线 / 描边。
+    ///
+    /// **必须相对它所在的那个面派生,不能一律用 `panelBackground` 的那条。**
+    /// `windowBackground` 也是从 `panelBackground` 派生、往同一方向(黑)走的,
+    /// 于是两条线会收敛:实测把 sidebar 的底色换成 `windowBackground` 之后,
+    /// catppuccin-latte / tokyo-night-day / kanagawa-lotus 三个亮色主题的
+    /// `hairline` 与它明度差只剩 1–2,分区线直接消失,另外 4 个亮色主题差
+    /// 3–6,勉强可见。改成相对所在面派生后,18 个主题的最小差是 17。
+    ///
+    /// 同一个坑也影响过卡片描边:它压在卡片与窗口底的交界上,用
+    /// `panelBackground` 派生的那条线时,亮色主题下卡片边界一直与窗口底同色。
+    public func hairline(on surface: ThemeColor) -> ThemeColor {
+        surface.mixed(with: text, 0.16)
+    }
+
+    /// 画在 `panelBackground` 上的分隔线 —— 终端平面自己的那条。
+    /// 别的面上请用 `hairline(on:)`。
+    public var hairline: ThemeColor { hairline(on: panelBackground) }
 
     /// The color that stands for an agent state. Follows herdr's own semantics
     /// for these tokens (the `Palette` doc comments in src/app/state.rs): yellow
