@@ -20,9 +20,22 @@ public enum GapProbe {
         _ frame: GridFrame,
         panes: [PaneLayoutRect]
     ) -> Bool {
+        firstContentOutsidePanes(frame, panes: panes) != nil
+    }
+
+    /// The first non-blank cell that no pane rect covers, in row-major order.
+    ///
+    /// Exists for diagnosis as much as for the check above: knowing that
+    /// *something* crossed a boundary is not enough to explain why the card grid
+    /// fell back to one big card — the offending coordinate is what makes that
+    /// traceable in the log.
+    public static func firstContentOutsidePanes(
+        _ frame: GridFrame,
+        panes: [PaneLayoutRect]
+    ) -> (column: Int, row: Int, symbol: String)? {
         let width = Int(frame.width)
         let height = Int(frame.height)
-        guard width > 0, height > 0 else { return false }
+        guard width > 0, height > 0 else { return nil }
 
         var covered = [Bool](repeating: false, count: width * height)
         for rect in panes {
@@ -40,9 +53,12 @@ public enum GapProbe {
         }
 
         for index in 0..<min(covered.count, frame.cells.count) where !covered[index] {
-            if !isBlank(frame.cells[index].symbol) { return true }
+            let symbol = frame.cells[index].symbol
+            if !isBlank(symbol) {
+                return (column: index % width, row: index / width, symbol: symbol)
+            }
         }
-        return false
+        return nil
     }
 
     /// ratatui pads empty regions with ordinary spaces. Tabs and newlines are not

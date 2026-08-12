@@ -44,6 +44,12 @@ public final class TerminalSession: ObservableObject {
     private var statusPoll: Task<Void, Never>?
     private var resizeDebounce: Task<Void, Never>?
     private var lastReportedGrid: (columns: UInt16, rows: UInt16)?
+    /// Guards `logRouting` so the first frame is recorded once. See `distribute`.
+    private var hasLoggedFrameRouting = false
+    /// The most recent frame, kept so a layout change can be applied to it
+    /// immediately. The server de-duplicates identical frames, so waiting for the
+    /// next one would leave the new layout unused indefinitely.
+    private var lastFrame: GridFrame?
 
     public init(
         paths: RuntimePaths = .defaultLocation(),
@@ -138,7 +144,16 @@ public final class TerminalSession: ObservableObject {
 
     /// Hands a frame to each pane, or draws it whole when it cannot be sliced.
     private func distribute(_ frame: GridFrame) {
+        lastFrame = frame
         let fallback = router.shouldRenderWholeGrid(frame)
+
+        // Logged on the first frame and on every flip, not per frame: per frame
+        // would bury the log, but logging nothing at all leaves no way to explain
+        // why the screen is one card instead of a grid of them.
+        if !hasLoggedFrameRouting || fallback != isWholeGridFallback {
+            hasLoggedFrameRouting = true
+            logRouting(frame, fallback: fallback)
+        }
         if fallback != isWholeGridFallback { isWholeGridFallback = fallback }
 
         if fallback {
@@ -166,7 +181,23 @@ public final class TerminalSession: ObservableObject {
 
     /// Adopts a new layout and drops the views of panes that are gone.
     private func applyLayout(_ snapshot: PaneLayoutSnapshot) {
-        router.apply(snapshot)
+        // herdr re-emits layout_updated about every 100ms whether or not anything
+        // changed, so this has to be idempotent: without the guard, every one of
+        // those would re-slice the frame and republish state, redrawing the whole
+        // card grid ten times a second for no result.
+        guard router.apply(snapshot) else { return }
+
+        // Only actual changes are logged — a split, a close, a resize. That keeps
+        // the log readable while still explaining the routing decision below.
+        log(
+            "layout applied: panes=\(snapshot.panes.count) zoomed=\(snapshot.zoomed)"
+                + " area=\(snapshot.area.width)x\(snapshot.area.height)"
+                + " focused=\(snapshot.focusedPaneId)"
+        )
+        // Re-arm the routing log so the next frame explains how this layout was
+        // used. Without this, a layout that arrives but still routes to the
+        // fallback is silent, which is indistinguishable from no layout at all.
+        hasLoggedFrameRouting = false
         let live = Set(snapshot.panes.map(\.paneId))
         for paneId in paneViews.keys where !live.contains(paneId) {
             paneViews.removeValue(forKey: paneId)
@@ -174,6 +205,33 @@ public final class TerminalSession: ObservableObject {
         for pane in LayoutGeometry.visiblePanes(in: snapshot) {
             _ = viewForPane(pane.paneId)
         }
+
+        // Re-run the routing decision against the frame already on screen. The
+        // server de-duplicates identical frames, so after a layout change there
+        // may be no further frame for a long time — and since the fallback flag is
+        // only recomputed in `distribute`, waiting for one would leave the new
+        // layout unused and the screen stuck on the whole-grid fallback.
+        if let lastFrame { distribute(lastFrame) }
+    }
+
+    /// Records how one frame was routed, and when it fell back, which cell caused
+    /// it. `panes=0` means no layout has arrived, which is a different failure from
+    /// a layout that arrived but has content crossing a boundary.
+    private func logRouting(_ frame: GridFrame, fallback: Bool) {
+        let panes = router.visiblePanes
+        var message = "routing frame \(frame.width)x\(frame.height)"
+            + " panes=\(panes.count) fallback=\(fallback)"
+        if fallback, !panes.isEmpty {
+            let rects = panes.map(\.rect)
+            if let offender = GapProbe.firstContentOutsidePanes(frame, panes: rects) {
+                message += " firstOutside=(col \(offender.column), row \(offender.row))"
+                    + " symbol=\(offender.symbol.debugDescription)"
+            }
+            message += " rects=" + rects
+                .map { "\($0.x),\($0.y),\($0.width)x\($0.height)" }
+                .joined(separator: " ")
+        }
+        log(message)
     }
 
     private func applyThemeToAllViews(_ theme: Theme) {
@@ -198,6 +256,13 @@ public final class TerminalSession: ObservableObject {
             log("layout_updated payload did not decode")
             return
         }
+        // The event is emitted per (workspace, tab), including for tabs that are
+        // not showing. See `PaneFrameRouter.belongsToCurrentView` for what adopting
+        // all of them looked like.
+        guard PaneFrameRouter.belongsToCurrentView(
+            snapshot,
+            activeTabId: sidebar.activeTabId
+        ) else { return }
         applyLayout(snapshot)
     }
 
@@ -215,8 +280,15 @@ public final class TerminalSession: ObservableObject {
                 // the handshake, and the server sets effective_size to the declared
                 // size the moment the app connection registers. Before that the
                 // rects would be computed against an 80x24 fallback.
-                if let layout = try? api.paneLayout() {
+                do {
+                    let layout = try api.paneLayout()
                     await MainActor.run { self?.applyLayout(layout) }
+                } catch {
+                    // Not fatal — layout_updated will still arrive on the next
+                    // change — but it must not be silent: without a layout the
+                    // grid stays on the whole-frame fallback, and a swallowed
+                    // error here looks exactly like a rendering bug.
+                    await MainActor.run { self?.log("pane.layout failed: \(error)") }
                 }
                 let pump = try api.subscribe()
                 await MainActor.run { self?.eventPump = pump }
@@ -375,6 +447,9 @@ public final class TerminalSession: ObservableObject {
 
     private func sendResize(_ grid: (columns: UInt16, rows: UInt16)) {
         guard let connection else { return }
+        // Diagnostic: a resize makes the server recompute the layout, so if these
+        // are frequent they are the driver behind any layout churn.
+        log("resize -> \(grid.columns)x\(grid.rows)")
         lastReportedGrid = grid
         let cell = font.cellSize
         try? connection.send(
