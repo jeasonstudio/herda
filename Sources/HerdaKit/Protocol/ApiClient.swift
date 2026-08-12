@@ -171,6 +171,16 @@ public final class ApiClient: @unchecked Sendable {
         _ = try request(method: "pane.close", params: ["pane_id": paneId], id: "close-pane")
     }
 
+    /// Whether a pane still exists.
+    ///
+    /// The authoritative answer to "did the pane go away, or did I just lose the
+    /// connection?". Guessing that from a failed reattach does not work: opening a
+    /// connection to a dead terminal succeeds, and the server only rejects it
+    /// afterwards with an asynchronous `ServerShutdown`.
+    public func paneExists(_ paneId: String) -> Bool {
+        (try? request(method: "pane.get", params: ["pane_id": paneId], id: "pane-get")) != nil
+    }
+
     /// Sends key presses to one pane, by herdr's key names.
     ///
     /// The preferred input channel: herdr encodes each name with that

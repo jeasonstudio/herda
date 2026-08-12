@@ -137,3 +137,63 @@ final class PaneTreeLayoutTests: XCTestCase {
         XCTAssertTrue(PaneTreeLayout.dividers(for: tree, in: area, gap: gap).isEmpty)
     }
 }
+
+extension PaneTreeLayoutTests {
+    private var dragArea: CGRect { CGRect(x: 0, y: 0, width: 1000, height: 600) }
+
+    private func twoPaneDivider() -> PaneTreeLayout.Divider? {
+        var tree = PaneTree()
+        tree.adopt(paneId: "p1")
+        tree.split(paneId: "p1", with: "p2", orientation: .horizontal)
+        return PaneTreeLayout.dividers(for: tree, in: dragArea, gap: 8).first
+    }
+
+    func testDividerCarriesTheRectItDivides() {
+        // A drag turns a pointer position into a ratio, which needs the split's
+        // own rect — not derivable from the divider strip alone.
+        XCTAssertEqual(twoPaneDivider()?.containerRect, dragArea)
+    }
+
+    func testRatioFollowsThePointer() {
+        guard let divider = twoPaneDivider() else { return XCTFail("no divider") }
+        // usable = 1000 - 8 = 992
+        XCTAssertEqual(
+            divider.ratio(at: CGPoint(x: 248, y: 300), gap: 8), 0.25, accuracy: 0.001
+        )
+        XCTAssertEqual(
+            divider.ratio(at: CGPoint(x: 744, y: 300), gap: 8), 0.75, accuracy: 0.001
+        )
+    }
+
+    func testRatioClampsSoAPaneCannotBeDraggedToNothing() {
+        // Dragging past the edge would otherwise ask that pane for zero columns,
+        // and herdr sizes the PTY from what the client declares.
+        guard let divider = twoPaneDivider() else { return XCTFail("no divider") }
+        XCTAssertEqual(divider.ratio(at: CGPoint(x: -500, y: 0), gap: 8), 0.1, accuracy: 0.001)
+        XCTAssertEqual(divider.ratio(at: CGPoint(x: 5000, y: 0), gap: 8), 0.9, accuracy: 0.001)
+    }
+
+    func testAVerticalDividerReadsTheYAxis() {
+        var tree = PaneTree()
+        tree.adopt(paneId: "p1")
+        tree.split(paneId: "p1", with: "p2", orientation: .vertical)
+        guard let divider = PaneTreeLayout.dividers(
+            for: tree, in: dragArea, gap: 8
+        ).first else { return XCTFail("no divider") }
+        XCTAssertEqual(divider.orientation, .vertical)
+        // usable = 600 - 8 = 592
+        XCTAssertEqual(divider.ratio(at: CGPoint(x: 0, y: 148), gap: 8), 0.25, accuracy: 0.001)
+    }
+
+    func testAContainerTooSmallToDivideDoesNotProduceNaN() {
+        var tree = PaneTree()
+        tree.adopt(paneId: "p1")
+        tree.split(paneId: "p1", with: "p2", orientation: .horizontal)
+        guard let divider = PaneTreeLayout.dividers(
+            for: tree, in: CGRect(x: 0, y: 0, width: 4, height: 4), gap: 8
+        ).first else { return XCTFail("no divider") }
+        let ratio = divider.ratio(at: CGPoint(x: 2, y: 2), gap: 8)
+        XCTAssertFalse(ratio.isNaN)
+        XCTAssertEqual(ratio, 0.5, accuracy: 0.001)
+    }
+}

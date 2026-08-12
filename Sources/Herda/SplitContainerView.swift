@@ -28,9 +28,15 @@ struct SplitContainerView: View {
 
                 // No divider line is drawn. The gap separates the cards and each
                 // card already carries its own stroke; a hairline down the middle
-                // of the gap reads as a third surface competing with both.
-                // `PaneTreeLayout.dividers` still computes the drag targets.
+                // of the gap reads as a third surface competing with both. What
+                // sits in the gap is an invisible drag handle.
+                ForEach(session.dividers(in: area), id: \.path) { divider in
+                    DividerHandle(divider: divider, coordinateSpace: Self.areaSpace) { ratio in
+                        session.setRatio(ratio, at: divider.path)
+                    }
+                }
             }
+            .coordinateSpace(name: Self.areaSpace)
             .onAppear { session.start(viewportSize: geometry.size) }
             .onChange(of: geometry.size) { _, size in
                 session.areaChanged(to: CGRect(origin: .zero, size: size))
@@ -41,6 +47,10 @@ struct SplitContainerView: View {
     private func isFocused(_ paneId: String) -> Bool {
         session.tree.focusedPaneId == paneId
     }
+
+    /// Named so a drag reports a position in the terminal area's coordinates
+    /// rather than the handle's own, which is what `Divider.ratio(at:gap:)` needs.
+    private static let areaSpace = "herda.terminal-area"
 
     private func card(connection: PaneConnection, isFocused: Bool) -> some View {
         PaneGridRepresentable(view: connection.view)
@@ -56,6 +66,58 @@ struct SplitContainerView: View {
             )
             .contentShape(Rectangle())
             .onTapGesture { session.focus(paneId: connection.paneId) }
+    }
+}
+
+/// An invisible strip in the gap that resizes the split it divides.
+///
+/// A view of its own so the cursor push is balanced by its own state. Pushing and
+/// popping `NSCursor` from a stateless hover closure goes wrong the first time an
+/// exit event is missed, and the symptom — a resize cursor stuck over the whole
+/// window until the app is relaunched — is far more annoying than the feature.
+private struct DividerHandle: View {
+    let divider: PaneTreeLayout.Divider
+    let coordinateSpace: String
+    let onRatio: (Double) -> Void
+
+    @State private var pushedCursor = false
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .frame(width: divider.hitRect.width, height: divider.hitRect.height)
+            .offset(x: divider.hitRect.minX, y: divider.hitRect.minY)
+            .onHover { inside in
+                if inside, !pushedCursor {
+                    pushedCursor = true
+                    divider.orientation == .horizontal
+                        ? NSCursor.resizeLeftRight.push()
+                        : NSCursor.resizeUpDown.push()
+                } else if !inside, pushedCursor {
+                    pushedCursor = false
+                    NSCursor.pop()
+                }
+            }
+            .onDisappear {
+                // A split can be closed while the pointer is still over its
+                // divider, and then no exit event ever arrives.
+                if pushedCursor { pushedCursor = false; NSCursor.pop() }
+            }
+            .gesture(
+                // The ratio comes from the pointer's absolute position rather than
+                // an accumulated translation, so the divider tracks the cursor
+                // exactly instead of drifting away from it once the ratio clamps.
+                //
+                // Only the tree changes here, which is local and immediate. The
+                // PTYs follow through PaneConnection.resize, which coalesces a
+                // drag's worth of changes — each one that reached the server would
+                // make the child application reflow.
+                DragGesture(minimumDistance: 1, coordinateSpace: .named(coordinateSpace))
+                    .onChanged { value in
+                        onRatio(divider.ratio(at: value.location, gap: ChromeMetrics.paneGap))
+                    }
+            )
     }
 }
 

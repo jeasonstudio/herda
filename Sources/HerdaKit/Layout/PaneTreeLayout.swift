@@ -17,6 +17,28 @@ public enum PaneTreeLayout {
         /// What accepts a drag. An 8pt strip is hard to grab, so this is widened
         /// on the thin axis only.
         public let hitRect: CGRect
+        /// The rect the split divides. A drag needs it to turn a pointer position
+        /// into a ratio, and it is not derivable from the divider alone.
+        public let containerRect: CGRect
+
+        /// The ratio a pointer at this position implies, clamped to the tree's
+        /// own bounds so a pane can never be dragged to zero width.
+        public func ratio(at point: CGPoint, gap: CGFloat) -> Double {
+            switch orientation {
+            case .horizontal:
+                let usable = containerRect.width - gap
+                guard usable > 0 else { return 0.5 }
+                return clamp(Double((point.x - containerRect.minX) / usable))
+            case .vertical:
+                let usable = containerRect.height - gap
+                guard usable > 0 else { return 0.5 }
+                return clamp(Double((point.y - containerRect.minY) / usable))
+            }
+        }
+
+        private func clamp(_ value: Double) -> Double {
+            min(max(value, PaneTree.ratioBounds.lowerBound), PaneTree.ratioBounds.upperBound)
+        }
     }
 
     /// How far past the drawn gap a drag is still accepted, per side.
@@ -61,7 +83,8 @@ public enum PaneTreeLayout {
                 rect: strip,
                 hitRect: split.orientation == .horizontal
                     ? strip.insetBy(dx: -hitSlop, dy: 0)
-                    : strip.insetBy(dx: 0, dy: -hitSlop)
+                    : strip.insetBy(dx: 0, dy: -hitSlop),
+                containerRect: rect
             ))
         }
         return result

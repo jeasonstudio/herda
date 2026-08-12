@@ -17,7 +17,33 @@ struct HerdaApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 760)
-        .commands { PaneCommands(session: session) }
+        .commands {
+            EditCommands(session: session)
+            PaneCommands(session: session)
+        }
+    }
+}
+
+/// Copy, Paste and Select All, in the Edit menu where a Mac user looks for them.
+///
+/// Replacing the pasteboard group rather than handling these in `keyDown`: a menu
+/// key equivalent is dispatched before the view sees the key, so doing both would
+/// either fire twice or shadow the menu item — and an item that exists but does
+/// nothing is worse than no item.
+struct EditCommands: Commands {
+    @ObservedObject var session: TerminalSession
+
+    var body: some Commands {
+        CommandGroup(replacing: .pasteboard) {
+            Button("Copy") { session.copySelection() }
+                .keyboardShortcut("c", modifiers: .command)
+                .disabled(!session.hasSelection)
+            Button("Paste") { session.pasteIntoFocused() }
+                .keyboardShortcut("v", modifiers: .command)
+            Divider()
+            Button("Select All") { session.selectAllInFocused() }
+                .keyboardShortcut("a", modifiers: .command)
+        }
     }
 }
 

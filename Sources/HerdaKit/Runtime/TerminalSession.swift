@@ -268,13 +268,32 @@ public final class TerminalSession: ObservableObject {
     /// as a dead pane deleted a card whose process was still running, after which
     /// nothing resized its PTY and it sat at herdr's default 80x24.
     ///
-    /// Pane lifecycle is the API's to report — `pane_closed` and `pane_exited`.
-    /// This only reopens. If the pane really is gone the reopen fails, logs, and
-    /// stops; the event then removes it from the tree.
+    /// So the pane is asked about rather than assumed either way. Inferring it
+    /// from a failed reattach does not work and produced a tight loop: opening a
+    /// connection to a dead terminal *succeeds*, and the server only rejects it
+    /// afterwards with an asynchronous `ServerShutdown`, which drops the
+    /// connection, which reattaches. Observed spinning through six panes that no
+    /// longer existed, several times a second.
     private func connectionDropped(_ paneId: String) {
         guard connections.removeValue(forKey: paneId) != nil else { return }
-        log("connection to \(paneId) dropped; reattaching")
-        reconcile()
+        guard let api else { return }
+        Task.detached { [weak self] in
+            // Delayed so a pane that keeps refusing the connection retries slowly
+            // instead of spinning. Invisible for a genuine reconnect.
+            try? await Task.sleep(for: .milliseconds(250))
+            let exists = api.paneExists(paneId)
+            await MainActor.run {
+                guard let self else { return }
+                guard exists else {
+                    self.log("connection to \(paneId) dropped and the pane is gone")
+                    self.paneRemoved(paneId)
+                    return
+                }
+                guard self.tree.paneIds.contains(paneId) else { return }
+                self.log("connection to \(paneId) dropped; reattaching")
+                self.reconcile()
+            }
+        }
     }
 
     /// The pane itself is gone, per herdr.
@@ -398,6 +417,33 @@ public final class TerminalSession: ObservableObject {
               let neighbour = tree.neighbour(of: focused, direction)
         else { return }
         focus(paneId: neighbour)
+    }
+
+    /// Copies the focused pane's selection. Nil-safe: with nothing selected this
+    /// does nothing, which is what Copy does everywhere else on the platform.
+    public func copySelection() {
+        guard let focused = tree.focusedPaneId,
+              let text = connections[focused]?.view.selectedText
+        else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Pastes into the focused pane.
+    public func pasteIntoFocused() {
+        guard let focused = tree.focusedPaneId else { return }
+        connections[focused]?.view.paste()
+    }
+
+    public func selectAllInFocused() {
+        guard let focused = tree.focusedPaneId else { return }
+        connections[focused]?.view.selectAll()
+    }
+
+    /// Whether the focused pane has something to copy, for menu validation.
+    public var hasSelection: Bool {
+        guard let focused = tree.focusedPaneId else { return false }
+        return connections[focused]?.view.selectedText != nil
     }
 
     public func toggleZoomFocused() {

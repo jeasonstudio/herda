@@ -140,12 +140,31 @@ final class TerminalGridInputTests: XCTestCase {
         XCTAssertTrue(sent().isEmpty)
     }
 
-    func testCommandVPastesTheHostPasteboard() {
+    func testPasteSendsTheHostPasteboard() {
+        // The pane cannot read the host pasteboard, so this has to come from here.
+        let (view, sent) = makeView()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("pasted", forType: .string)
+        view.paste()
+        XCTAssertEqual(sent(), [WireEncoder.paste("pasted")])
+    }
+
+    func testCommandVIsNotInterceptedHere() {
+        // Paste lives in the Edit menu now. A menu key equivalent is dispatched
+        // before the view sees the key, so intercepting cmd+v here as well would
+        // either paste twice or shadow the menu item.
         let (view, sent) = makeView()
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("pasted", forType: .string)
         view.keyDown(with: event(keyCode: 9, characters: "v", flags: .command))
-        XCTAssertEqual(sent(), [WireEncoder.paste("pasted")])
+        XCTAssertNotEqual(sent(), [WireEncoder.paste("pasted")])
+    }
+
+    func testPasteWithAnEmptyPasteboardSendsNothing() {
+        let (view, sent) = makeView()
+        NSPasteboard.general.clearContents()
+        view.paste()
+        XCTAssertTrue(sent().isEmpty)
     }
 
     func testLosingFirstResponderAbandonsTheComposition() {
