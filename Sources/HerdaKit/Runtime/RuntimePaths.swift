@@ -40,6 +40,24 @@ public struct RuntimePaths: Sendable {
     /// the extension, so it must not be set independently.
     public var clientSocket: URL { root.appendingPathComponent("herdr-client.sock") }
 
+    /// herdr's product-announcement store. `state_dir()` appends the app
+    /// directory name to `XDG_STATE_HOME`, the same way `config_dir()` does.
+    ///
+    /// `Mode::ProductAnnouncement` is chosen at startup right after
+    /// `Mode::Onboarding` and **has no config key** — the decision only consults
+    /// this file. It fails the same way onboarding did: the overlay covers the
+    /// terminal and takes input before keybindings match, so it would surface the
+    /// next time herdr ships an announcement.
+    ///
+    /// `load_unseen_from_path` starts by unwrapping `store.latest`, so a store
+    /// whose `latest` is null suppresses it permanently. Both fields of
+    /// `AnnouncementStore` are `#[serde(default)]`, so the JSON below parses.
+    public var announcementStore: URL {
+        stateHome
+            .appendingPathComponent("herdr", isDirectory: true)
+            .appendingPathComponent("product-announcements.json")
+    }
+
     /// Hides herdr's own sidebar from the first frame, since the native UI
     /// replaces it, and sets `[theme] name` so herdr's own chrome — hidden in
     /// this prototype, but consulted if it ever becomes visible again — matches
@@ -122,6 +140,19 @@ public struct RuntimePaths: Sendable {
     public func writeConfig(themeName: String) throws {
         try createDirectories()
         try configContents(themeName: themeName).write(to: configFile, atomically: true, encoding: .utf8)
+        // One call site: both files have to land before the server is spawned.
+        try writeEmptyAnnouncementStore()
+    }
+
+    /// Writes an announcement store with no `latest`, which is what keeps
+    /// `Mode::ProductAnnouncement` from taking the first frame. See
+    /// `announcementStore`.
+    public func writeEmptyAnnouncementStore() throws {
+        try FileManager.default.createDirectory(
+            at: announcementStore.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(#"{"latest":null,"seen":[]}"#.utf8).write(to: announcementStore)
     }
 
     /// Reads the `[theme] name` from a config.toml written by a previous
