@@ -114,4 +114,43 @@ final class ApiClientTests: XCTestCase {
             lock.lock(); storage.append(name); lock.unlock()
         }
     }
+
+    // MARK: Layout surface
+
+    func testPaneLayoutRequestLine() throws {
+        let line = try ApiClient.requestLine(id: "layout", method: "pane.layout", params: [:])
+        XCTAssertTrue(line.contains("\"method\":\"pane.layout\""))
+        XCTAssertTrue(line.hasSuffix("\n"))
+    }
+
+    func testSplitPaneRequestCarriesDirectionAndTargetPane() throws {
+        let line = try ApiClient.requestLine(
+            id: "split",
+            method: "pane.split",
+            params: ["target_pane_id": "w1:p1", "direction": "right", "focus": true]
+        )
+        XCTAssertTrue(line.contains("\"method\":\"pane.split\""))
+        XCTAssertTrue(line.contains("\"direction\":\"right\""))
+        XCTAssertTrue(line.contains("\"target_pane_id\":\"w1:p1\""))
+    }
+
+    func testSetSplitRatioRequestLine() throws {
+        let line = try ApiClient.requestLine(
+            id: "ratio",
+            method: "layout.set_split_ratio",
+            params: ["split_id": "s0", "ratio": 0.42]
+        )
+        XCTAssertTrue(line.contains("\"method\":\"layout.set_split_ratio\""))
+        XCTAssertTrue(line.contains("\"split_id\":\"s0\""))
+    }
+
+    func testLayoutEventTypeIsSubscribed() throws {
+        // Load-bearing: keyboard split and JSON API split both go through the same
+        // dispatcher on the server, so the event always fires — but without this
+        // subscription the UI would sit on a stale layout after every prefix-key
+        // split.
+        XCTAssertTrue(ApiClient.sidebarEventTypes.contains("layout.updated"))
+        let line = try ApiClient.subscribeLine(to: ApiClient.sidebarEventTypes)
+        XCTAssertTrue(line.contains("layout.updated"))
+    }
 }

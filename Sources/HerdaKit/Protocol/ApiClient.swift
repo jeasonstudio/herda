@@ -118,6 +118,36 @@ public final class ApiClient: @unchecked Sendable {
         )
     }
 
+    /// Measured: `result`'s keys are `["layout", "type"]`, so the snapshot sits one
+    /// level down and this goes through the envelope rather than decoding `result`.
+    public func paneLayout() throws -> PaneLayoutSnapshot {
+        try request(PaneLayoutEnvelope.self, method: "pane.layout", id: "pane-layout").layout
+    }
+
+    public func splitPane(_ paneId: String, direction: SplitDirection) throws {
+        _ = try request(
+            method: "pane.split",
+            params: ["target_pane_id": paneId, "direction": direction.rawValue, "focus": true],
+            id: "split-pane"
+        )
+    }
+
+    public func zoomPane(_ paneId: String) throws {
+        _ = try request(method: "pane.zoom", params: ["pane_id": paneId], id: "zoom-pane")
+    }
+
+    public func closePane(_ paneId: String) throws {
+        _ = try request(method: "pane.close", params: ["pane_id": paneId], id: "close-pane")
+    }
+
+    public func setSplitRatio(_ splitId: String, ratio: Double) throws {
+        _ = try request(
+            method: "layout.set_split_ratio",
+            params: ["split_id": splitId, "ratio": ratio],
+            id: "set-split-ratio"
+        )
+    }
+
     static func subscribeLine(to eventTypes: [String]) throws -> String {
         try requestLine(
             id: "events",
@@ -140,6 +170,11 @@ public final class ApiClient: @unchecked Sendable {
         "pane.focused",
         "pane.exited",
         "pane.agent_detected",
+        // Load-bearing for the native split layout: keyboard split and JSON API
+        // split both go through the server's one mutation dispatcher, so this
+        // event always fires. Without the subscription the UI would sit on a
+        // stale layout after every prefix-key split.
+        "layout.updated",
     ]
 
     /// Opens a subscription and returns the pump driving it. The connection must
