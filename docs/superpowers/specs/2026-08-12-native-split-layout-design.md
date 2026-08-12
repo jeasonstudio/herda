@@ -112,11 +112,25 @@ herdr 本质是 **PTY + 终端模拟 + 会话持久化服务**。第一版把它
 
 代价是 `ControlTerminal` 占据该 terminal 的**独占可写 owner 槽**（`terminal_attach_owners`），shell 里再 `herdr terminal attach` 需要 `--takeover`。
 
-**三｜握手顺序固定。** `client_is_pending_terminal_mode` 要求 `pending_terminal_attach && mode == App`（`headless.rs:2672`），即必须 `Hello { launch_mode: TerminalAttach }` 之后再发 `ControlTerminal`。顺序错了 server 回 `ServerShutdown` 并踢掉连接。
+**三｜API 是「一请求一连接」，所以输入必须串行化。** `handle_connection`（`api/server.rs:139`）只读一行（`read_initial_request_line`），派发后返回 —— **没有循环**。只有 `events.subscribe` 与 `pane.graphics.stream` 会接管连接。持久输入通道不存在，每次 `pane.send_keys` 都是一条新连接。
 
-**四｜cols/rows 由 view 尺寸和字体推出，不能反过来。** `cols = floor(width / cellSize.width)`、`rows = floor(height / cellSize.height)`，`cellSize` 来自 `TerminalFont`（本机 MapleMono-NF-CN 13pt → 8.0 × 17.0）。这是 CLAUDE.md「cell 度量来自字体自己的表，绝不硬编码」的直接应用。余下的不足一格的边缘由卡片内边距吸收 —— 这是第一版做不到的事：那里整块 grid 的余量会累积。
+并发的一次性连接之间**没有顺序保证**（都经 `api_tx` 进 app 事件队列），所以按键必须走一条串行队列、一次一个、等到响应再发下一个。否则快速连打会乱序，而乱序的字符流几乎无法回溯定位。
 
-**五｜`zoomed` 由 herda 自己表达。** 第一版硬约束六（snapshot 的 `panes[]` 在 zoom 时仍报告未 zoom 的 rect）**不再适用** —— herda 不读 herdr 的 rect。zoom 是 herda `PaneTree` 上的本地状态：只显示焦点 pane 铺满、其余连接保持存活但不渲染（PTY 尺寸是否随之改变见「待定项」）。
+实测这个上限完全够用（200 次 `pane.send_keys`，直接连 unix socket，排除 CLI 进程开销）：
+
+| min | p50 | p95 | max |
+|---|---|---|---|
+| 0.12ms | **0.16ms** | 0.38ms | 105ms |
+
+串行上限约 6200 键/秒。p50 是一帧的百分之一量级。那个 105ms 离群值（200 次里 1 次）来自请求要经 app 主循环、而主循环同时在渲染 —— 单键偶发停顿，对终端输入不可感知，但记下来以免将来误判成别处的性能问题。
+
+（测量教训：这 200 次发的是 `f5`，而 zsh 把 `ESC[15~` 拆成未知序列 + `~`，往活 pane 里插了 200 个 `~`。后续实测一律用临时 pane。）
+
+**四｜握手顺序固定。** `client_is_pending_terminal_mode` 要求 `pending_terminal_attach && mode == App`（`headless.rs:2672`），即必须 `Hello { launch_mode: TerminalAttach }` 之后再发 `ControlTerminal`。顺序错了 server 回 `ServerShutdown` 并踢掉连接。
+
+**五｜cols/rows 由 view 尺寸和字体推出，不能反过来。** `cols = floor(width / cellSize.width)`、`rows = floor(height / cellSize.height)`，`cellSize` 来自 `TerminalFont`（本机 MapleMono-NF-CN 13pt → 8.0 × 17.0）。这是 CLAUDE.md「cell 度量来自字体自己的表，绝不硬编码」的直接应用。余下的不足一格的边缘由卡片内边距吸收 —— 这是第一版做不到的事：那里整块 grid 的余量会累积。
+
+**六｜`zoomed` 由 herda 自己表达。** 第一版硬约束六（snapshot 的 `panes[]` 在 zoom 时仍报告未 zoom 的 rect）**不再适用** —— herda 不读 herdr 的 rect。zoom 是 herda `PaneTree` 上的本地状态：只显示焦点 pane 铺满、其余连接保持存活但不渲染（PTY 尺寸是否随之改变见「待定项」）。
 
 ## 拓扑归 herdr，几何归 herda
 
@@ -212,7 +226,7 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 1. **attach 连接会收到哪些 `ServerMessage`。** 已知有帧和 `ServerShutdown`（终端消失时 reason 为 `terminal attach ended: ...`，`headless.rs:4125`）。`Notify` / `SetTitle` / `ReloadSoundConfig` 是否也发、`Handshake` 回什么尺寸，要抓一次真实字节。
 2. **zoom 时非焦点 pane 的 PTY 尺寸怎么处理。** 保持原尺寸最简单，但焦点 pane 铺满后要 resize；退出 zoom 再改回去会让子应用重排两次。可能更好的做法是 zoom 期间不动任何 PTY 尺寸，只改渲染。要实测子应用的观感。
 3. **Home / End 的 CSI 形在真实应用里够不够。** 词表洞已实测确认（见已验证事实五），解法已定，但 `ESC[H`/`ESC[F` 对 application cursor mode 下的 vim / less / nano / zsh 行编辑要逐个试过。若某个应用只认 `ESCOH`，需要记下来并考虑是否值得推动 herdr 补词表。
-4. **输入延迟。** `pane.send_keys` 是 JSON 请求，本地 unix socket 上应远低于一帧，但要实测确认连打不掉字、不乱序（同一 socket 单流，顺序应有保证），并确认不等响应（fire-and-forget）是否安全。
+4. **串行输入队列在真实连打下的表现。** 单次延迟已实测（硬约束三：p50 0.16ms），但串行队列在按键重复（按住方向键，约 30/秒）和输入法长串提交下要实机确认不掉字、不乱序，以及那个 105ms 离群值在连打中会不会聚集。
 5. **`herdr pane read` 等 CLI 互操作在 attach 锁定下是否照常。** 预期照常（读路径不 resize），但值得一条实测。
 
 ## 需要更正的既有记录
