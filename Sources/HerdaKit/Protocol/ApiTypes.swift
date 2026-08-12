@@ -59,8 +59,28 @@ public struct PaneInfo: Decodable, Identifiable, Sendable {
     /// Absent on panes that are not running a recognised agent.
     public let agent: String?
     public let terminalTitleStripped: String?
+    /// Scroll position, absent when the server does not report one. The native
+    /// scrollbar reads it from here instead of subscribing per pane — see
+    /// `ScrollbarGeometry` for why.
+    public let scroll: PaneScrollInfo?
 
     public var id: String { paneId }
+}
+
+/// A pane's scrollback position, as carried on `PaneInfo`.
+public struct PaneScrollInfo: Decodable, Equatable, Sendable {
+    /// Rows away from the bottom. 0 means pinned to the newest output.
+    public let offsetFromBottom: Int
+    /// How many further rows are reachable above the current view. 0 means the
+    /// content has not exceeded one screen.
+    public let maxOffsetFromBottom: Int
+    public let viewportRows: Int
+
+    public init(offsetFromBottom: Int, maxOffsetFromBottom: Int, viewportRows: Int) {
+        self.offsetFromBottom = offsetFromBottom
+        self.maxOffsetFromBottom = maxOffsetFromBottom
+        self.viewportRows = viewportRows
+    }
 }
 
 public struct SessionSnapshot: Decodable, Sendable {
