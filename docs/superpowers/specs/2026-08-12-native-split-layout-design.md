@@ -197,7 +197,7 @@ layout 快照必须在 app 连接 hello 完成之后取，否则 rect 是按 80�
 
 ## 实测结论（2026-08-12）
 
-四项全部对 herda 自己的隔离 server 实测，herdr 0.8.0。原始响应存为 `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`。
+四项全部对 herda 自己的隔离 server 实测，herdr 0.8.0。`pane.layout` 的原始响应逐字节内联在 `LayoutSnapshotTests.realServerResponse`（跟随项目既有的 golden fixture 约定 —— 见 `WireDecoderTests.swift:6`，全部内联而非外部文件）；重抓命令是 `herdr pane layout --current`。
 
 **1｜rect 与实际内容逐格对齐 —— 成立。** 三 pane 布局给出 `p1 x=0 w=34` / `p3 x=35 w=33` / `p2 x=69 w=45`，间隙恰好一格落在第 34 与 68 列。在 p3 里打印 40 字符的标尺，输出折成 `33 + 7`，即 **PTY 宽度就是 `rect.width`**。加上从源码确认的两步恒等变换（硬约束一），`rect == inner_rect == PTY 尺寸 == 渲染区域` 得到实测支持。`scroll.viewport_rows` 为 40，与 `rect.height` 一致。
 

@@ -449,9 +449,10 @@ h pane layout --current
 **实际做法（比原计划简单）：** `herdr pane layout` 本身就输出 JSON，不需要 `--format json`，也不需要经 `nc` 直接打 socket：
 
 ```bash
-mkdir -p Tests/HerdaKitTests/Fixtures
-h pane layout --current > Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json
+h pane layout --current
 ```
+
+把输出逐字节抄进计划二的 `LayoutSnapshotTests.realServerResponse`（内联，见该计划 Task 1 的修正说明）。
 
 Expected: 一行 JSON。**注意 `result` 的键是 `["layout", "type"]`** —— `panes` 与 `splits` 在 `result.layout` 下面，不在 `result` 下面。这一层包装是本步骤最重要的发现，见文末「实测推翻的假设」。
 
@@ -561,7 +562,7 @@ of mistake CLAUDE.md's fixture rule exists to prevent."
 
 **字符边框的消失不需要视觉确认 —— 间隙的存在已经证明了它。** `apply_pane_chrome` 的 shrink 分支条件是 `multi_pane && pane_gaps && !pane_borders`（`src/ui/panes.rs:103`），而 borders 的判定是 `if !multi_pane || !pane_borders { Borders::NONE }`（`:112`）。观察到 shrink 生效 ⟹ `!pane_borders` 为真 ⟹ `Borders::NONE` 必然成立。两者是同一个条件的两个后果。
 
-**Task 6 — `pane layout` 原始输出：** 见 `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`（653 字节，三 pane、两层 split 的真实响应）。结构：
+**Task 6 — `pane layout` 原始输出：** 三 pane、两层 split 的真实响应，653 字节。逐字节内联在计划二的 `LayoutSnapshotTests.realServerResponse` —— 项目既有的 golden fixture 全是内联字面量（`WireDecoderTests.swift:6`），不引入外部文件那套机制。结构：
 
 ```json
 {"id":"cli:pane:layout","result":{"layout":{

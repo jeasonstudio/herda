@@ -35,9 +35,11 @@
 **Files:**
 - Create: `Sources/HerdaKit/Layout/LayoutSnapshot.swift`
 - Create: `Tests/HerdaKitTests/LayoutSnapshotTests.swift`
-- Fixture: `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`（计划一已抓取：三 pane、两层 split 的真实响应）
-
-> **实测修正。** 真实响应的 `result` 有一层 `layout` 包装（键是 `["layout", "type"]`），不是 `PaneLayoutSnapshot` 本身。下面的 fixture 测试按 `result.layout` 取，`ApiClient.paneLayout()` 也因此需要 envelope（计划三 Task 2 已同步修正）。
+> **两处修正。**
+>
+> **一、`result` 有一层 `layout` 包装**（键是 `["layout", "type"]`），不是 `PaneLayoutSnapshot` 本身。fixture 测试要按 `result.layout` 取，`ApiClient.paneLayout()` 因此需要 envelope（计划三 Task 2 已同步）。
+>
+> **二、fixture 内联，不用外部文件。** 原计划写的 `Bundle.module` 是 SPM 的 API，在 xcodegen 生成的 Xcode 工程里不存在，代码编译不过；而给测试 bundle 加 resources build phase 是引入一套新机制。项目既有的 golden fixture 全是内联字面量（`WireDecoderTests.swift:6` 的 `twoByOneFramePayload`），跟随它。CLAUDE.md 要求的是「fixture 的内容来自观察到的字节」，不是「必须是外部文件」——内联同样满足，且不会出现一个没人读的孤立文件慢慢腐烂。抓取命令写在测试注释里，任何人都能重抓一份对照。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -105,21 +107,46 @@ final class LayoutSnapshotTests: XCTestCase {
         XCTAssertEqual(Int(right.x) - (Int(left.x) + Int(left.width)), 1)
     }
 
-    func testDecodesRealServerOutput() throws {
-        // 计划一从真实 server 抓的响应。按 CLAUDE.md 的规矩,fixture 来自线上字节
-        // 而不是照 schema 推断的结构 —— 正是它揭穿了 `layout` 这层包装。
-        let url = try XCTUnwrap(Bundle.module.url(
-            forResource: "pane-layout-three-panes",
-            withExtension: "json"
-        ))
-        let response = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+    /// 从真实 server 抓到的 `pane.layout` 响应,逐字节原样。三 pane、两层 split。
+    /// 重抓方式(见计划一的公共前置):
+    ///
+    ///     h pane layout --current
+    ///
+    /// 按 CLAUDE.md 的规矩,内容来自线上字节而不是照 schema 推断 —— 正是它揭穿了
+    /// `result` 里那层 `layout` 包装,以及嵌套 split 的 rect 包含关系。
+    private let realServerResponse = """
+    {"id":"cli:pane:layout","result":{"layout":{\
+    "area":{"height":40,"width":114,"x":0,"y":0},\
+    "focused_pane_id":"w1:p1",\
+    "panes":[\
+    {"focused":true,"pane_id":"w1:p1","rect":{"height":40,"width":34,"x":0,"y":0}},\
+    {"focused":false,"pane_id":"w1:p3","rect":{"height":40,"width":33,"x":35,"y":0}},\
+    {"focused":false,"pane_id":"w1:p2","rect":{"height":40,"width":45,"x":69,"y":0}}],\
+    "splits":[\
+    {"direction":"right","id":"split_0_root","ratio":0.6052632,\
+    "rect":{"height":40,"width":114,"x":0,"y":0}},\
+    {"direction":"right","id":"split_1_0","ratio":0.5,\
+    "rect":{"height":40,"width":69,"x":0,"y":0}}],\
+    "tab_id":"w1:t1","workspace_id":"w1","zoomed":false\
+    },"type":"pane_layout"}}
+    """
+
+    /// 从原始响应里取出 snapshot。这条路径本身就是被测对象之一:`result` 的键是
+    /// `["layout", "type"]`,snapshot 在 `layout` 下面。
+    private func decodeRealServerSnapshot() throws -> PaneLayoutSnapshot {
+        let response = try JSONSerialization.jsonObject(
+            with: try XCTUnwrap(realServerResponse.data(using: .utf8))
+        )
         let result = try XCTUnwrap((response as? [String: Any])?["result"] as? [String: Any])
-        // 这一层是实测发现的:result 的键是 ["layout", "type"]。
         let layout = try XCTUnwrap(result["layout"])
-        let snapshot = try ApiTypes.decoder.decode(
+        return try ApiTypes.decoder.decode(
             PaneLayoutSnapshot.self,
             from: try JSONSerialization.data(withJSONObject: layout)
         )
+    }
+
+    func testDecodesRealServerOutput() throws {
+        let snapshot = try decodeRealServerSnapshot()
 
         XCTAssertEqual(snapshot.panes.count, 3)
         XCTAssertEqual(snapshot.panes.filter(\.focused).count, 1, "恰好一个焦点 pane")
@@ -136,22 +163,28 @@ final class LayoutSnapshotTests: XCTestCase {
 
     func testRealServerOutputHasOneCellGapsBetweenAllNeighbours() throws {
         // 实测值:p1 占 0..33、p3 占 35..67、p2 占 69..113,间隙在第 34 与 68 列。
-        let url = try XCTUnwrap(Bundle.module.url(
-            forResource: "pane-layout-three-panes",
-            withExtension: "json"
-        ))
-        let response = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
-        let result = try XCTUnwrap((response as? [String: Any])?["result"] as? [String: Any])
-        let snapshot = try ApiTypes.decoder.decode(
-            PaneLayoutSnapshot.self,
-            from: try JSONSerialization.data(withJSONObject: try XCTUnwrap(result["layout"]))
-        )
+        let snapshot = try decodeRealServerSnapshot()
 
         let ordered = snapshot.panes.sorted { $0.rect.x < $1.rect.x }
         for (left, right) in zip(ordered, ordered.dropFirst()) {
             let gap = Int(right.rect.x) - (Int(left.rect.x) + Int(left.rect.width))
             XCTAssertEqual(gap, 1, "\(left.paneId)|\(right.paneId) 之间必须恰好一格")
         }
+    }
+
+    func testEnvelopeDecodesTheWrappedSnapshot() throws {
+        // `PaneLayoutEnvelope` 是 ApiClient.paneLayout() 走的那条路 —— 直接把
+        // `result` 解成 PaneLayoutSnapshot 会失败。
+        let response = try JSONSerialization.jsonObject(
+            with: try XCTUnwrap(realServerResponse.data(using: .utf8))
+        )
+        let result = try XCTUnwrap((response as? [String: Any])?["result"])
+        let envelope = try ApiTypes.decoder.decode(
+            PaneLayoutEnvelope.self,
+            from: try JSONSerialization.data(withJSONObject: result)
+        )
+        XCTAssertEqual(envelope.layout.panes.count, 3)
+        XCTAssertEqual(envelope.layout.focusedPaneId, "w1:p1")
     }
 }
 ```
@@ -274,26 +307,13 @@ public struct PaneLayoutEnvelope: Decodable, Sendable {
 }
 ```
 
-- [ ] **Step 4: 确认 fixture 能被测试 target 找到**
+- [ ] **Step 4: 重新生成工程收录新目录**
 
-`Bundle.module` 要求 fixture 被声明为资源。检查 `project.yml` 里测试 target 是否已包含 `Tests/HerdaKitTests/Fixtures`：
+`Sources/HerdaKit/Layout/` 是新目录。`project.yml` 的 target 按路径递归收录，所以只要重新生成：
 
-Run: `grep -n -A 12 "HerdaKitTests" project.yml`
+Run: `xcodegen generate && echo ok`
 
-若没有资源声明，在测试 target 下加：
-
-```yaml
-    sources:
-      - path: Tests/HerdaKitTests
-      - path: Tests/HerdaKitTests/Fixtures
-        buildPhase: resources
-```
-
-然后 `xcodegen generate`。
-
-若项目已有其它 fixture（`WireDecoderTests` 的 golden fixture）采用了别的加载方式，**跟随那个方式**，不要引入第二种：
-
-Run: `grep -rn "Bundle\|fixture\|Fixtures" Tests/HerdaKitTests/WireDecoderTests.swift | head -5`
+Expected: `ok`，且 `herda.xcodeproj` 里出现 `Layout` 组。fixture 已内联，无需 resources 声明。
 
 - [ ] **Step 5: 运行测试确认通过**
 
@@ -303,9 +323,10 @@ Expected: 全部通过。
 
 - [ ] **Step 6: 提交**
 
+（`herda.xcodeproj` 是生成物，不入库。）
+
 ```bash
-xcodegen generate
-git add Sources/HerdaKit/Layout/LayoutSnapshot.swift Tests/HerdaKitTests/LayoutSnapshotTests.swift Tests/HerdaKitTests/Fixtures project.yml
+git add Sources/HerdaKit/Layout/LayoutSnapshot.swift Tests/HerdaKitTests/LayoutSnapshotTests.swift
 git commit -m "feat: decode herdr's pane layout snapshot
 
 The payload is flat, not a tree: panes[] carries a rect each and splits[] carries
