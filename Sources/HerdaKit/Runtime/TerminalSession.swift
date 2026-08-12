@@ -18,10 +18,24 @@ public final class TerminalSession: ObservableObject {
     @Published public private(set) var state: State = .idle
     @Published public private(set) var theme: Theme = ThemeCatalog.default
 
-    public let view: TerminalGridView
+    /// One view per pane, keyed by pane id. Each renders a slice of the single
+    /// frame the server sends; there is still only one render connection.
+    @Published public private(set) var paneViews: [String: TerminalGridView] = [:]
+
+    /// Where the layout lives. `@Published` so the card grid re-lays out whenever
+    /// herdr reports a change.
+    @Published public private(set) var router = PaneFrameRouter()
+
+    /// Draws the whole frame when content crosses pane boundaries, or before a
+    /// layout has arrived. See `PaneFrameRouter.shouldRenderWholeGrid`.
+    public let wholeGridView: TerminalGridView
+
+    /// Whether the whole-grid fallback is currently in effect.
+    @Published public private(set) var isWholeGridFallback = true
 
     public let sidebar = SidebarModel()
 
+    private let font: TerminalFont
     private let paths: RuntimePaths
     private var runtime: HerdrRuntime?
     private var connection: ClientProtocolConn?
@@ -36,8 +50,13 @@ public final class TerminalSession: ObservableObject {
         font: TerminalFont = TerminalFont()
     ) {
         self.paths = paths
-        self.view = TerminalGridView(terminalFont: font)
+        self.font = font
+        self.wholeGridView = TerminalGridView(terminalFont: font)
     }
+
+    /// One cell's pixel size. The view layer turns layout cell rects into frames
+    /// with it.
+    public var cellSize: CGSize { font.cellSize }
 
     public func start(viewportSize: CGSize) {
         guard case .idle = state else { return }
@@ -53,8 +72,8 @@ public final class TerminalSession: ObservableObject {
         let runtime = HerdrRuntime(paths: paths, binary: binary)
         self.runtime = runtime
 
-        let grid = view.gridSize(for: viewportSize)
-        let cell = view.cellSize
+        let grid = font.gridSize(for: viewportSize)
+        let cell = font.cellSize
         lastReportedGrid = grid
 
         Task.detached { [weak self, paths] in
@@ -65,7 +84,7 @@ public final class TerminalSession: ObservableObject {
                     ?? ThemeCatalog.default
                 await MainActor.run {
                     self?.theme = resolvedTheme
-                    self?.view.applyTheme(resolvedTheme)
+                    self?.applyThemeToAllViews(resolvedTheme)
                 }
 
                 try runtime.start(themeName: resolvedTheme.configName)
@@ -92,13 +111,13 @@ public final class TerminalSession: ObservableObject {
     private func attach(_ connection: ClientProtocolConn) {
         self.connection = connection
         state = .running
-        view.onPayload = { [weak self] payload in
+        wholeGridView.onPayload = { [weak self] payload in
             Task { @MainActor in self?.send(payload) }
         }
         log("handshake ok, read loop starting")
         connection.startReadLoop(
             onFrame: { [weak self] frame in
-                Task { @MainActor in self?.view.update(frame) }
+                Task { @MainActor in self?.distribute(frame) }
             },
             onShutdown: { [weak self] reason in
                 Task { @MainActor in
@@ -117,6 +136,71 @@ public final class TerminalSession: ObservableObject {
         startApiChannel()
     }
 
+    /// Hands a frame to each pane, or draws it whole when it cannot be sliced.
+    private func distribute(_ frame: GridFrame) {
+        let fallback = router.shouldRenderWholeGrid(frame)
+        if fallback != isWholeGridFallback { isWholeGridFallback = fallback }
+
+        if fallback {
+            wholeGridView.update(frame)
+            return
+        }
+        for (paneId, slice) in router.slices(for: frame) {
+            viewForPane(paneId).update(slice)
+        }
+    }
+
+    /// Returns a pane's view, creating it on first use. A new view gets the
+    /// current theme and the input outlet immediately — missing either leaves a
+    /// pane with the wrong palette or one that silently swallows typing.
+    private func viewForPane(_ paneId: String) -> TerminalGridView {
+        if let existing = paneViews[paneId] { return existing }
+        let view = TerminalGridView(terminalFont: font)
+        view.applyTheme(theme)
+        view.onPayload = { [weak self] payload in
+            Task { @MainActor in self?.send(payload) }
+        }
+        paneViews[paneId] = view
+        return view
+    }
+
+    /// Adopts a new layout and drops the views of panes that are gone.
+    private func applyLayout(_ snapshot: PaneLayoutSnapshot) {
+        router.apply(snapshot)
+        let live = Set(snapshot.panes.map(\.paneId))
+        for paneId in paneViews.keys where !live.contains(paneId) {
+            paneViews.removeValue(forKey: paneId)
+        }
+        for pane in LayoutGeometry.visiblePanes(in: snapshot) {
+            _ = viewForPane(pane.paneId)
+        }
+    }
+
+    private func applyThemeToAllViews(_ theme: Theme) {
+        wholeGridView.applyTheme(theme)
+        for view in paneViews.values { view.applyTheme(theme) }
+    }
+
+    /// Routes one event. `layout_updated` is handled here; everything else goes to
+    /// the sidebar.
+    ///
+    /// Subscription names use dots while the pushed `event` field uses
+    /// underscores, so the match below is on the underscore form.
+    private func handle(event name: String, data: [String: Any]) {
+        guard name == "layout_updated" else {
+            sidebar.handle(event: name, data: data)
+            return
+        }
+        guard let payload = data["layout"],
+              let bytes = try? JSONSerialization.data(withJSONObject: payload),
+              let snapshot = try? ApiTypes.decoder.decode(PaneLayoutSnapshot.self, from: bytes)
+        else {
+            log("layout_updated payload did not decode")
+            return
+        }
+        applyLayout(snapshot)
+    }
+
     /// Starts the API channel. Deliberately independent of the render channel:
     /// a stalled sidebar must not affect the terminal, and vice versa.
     private func startApiChannel() {
@@ -127,6 +211,13 @@ public final class TerminalSession: ObservableObject {
             do {
                 let snapshot = try api.snapshot()
                 await MainActor.run { self?.sidebar.apply(snapshot) }
+                // Safe to ask for the layout here: this runs from attach(), after
+                // the handshake, and the server sets effective_size to the declared
+                // size the moment the app connection registers. Before that the
+                // rects would be computed against an 80x24 fallback.
+                if let layout = try? api.paneLayout() {
+                    await MainActor.run { self?.applyLayout(layout) }
+                }
                 let pump = try api.subscribe()
                 await MainActor.run { self?.eventPump = pump }
                 pump.start(
@@ -136,7 +227,7 @@ public final class TerminalSession: ObservableObject {
                         // fresh, unshared dictionary — safe to hand to the main
                         // actor. The box carries it across the boundary.
                         let box = EventBox(name: name, data: data)
-                        Task { @MainActor in self?.sidebar.handle(event: box.name, data: box.data) }
+                        Task { @MainActor in self?.handle(event: box.name, data: box.data) }
                     },
                     onFailure: { error in
                         Task { @MainActor in self?.log("event pump stopped: \(error)") }
@@ -260,7 +351,7 @@ public final class TerminalSession: ObservableObject {
     /// sidebar stays hidden throughout (see `RuntimePaths.configContents`).
     public func setTheme(_ newTheme: Theme) {
         theme = newTheme
-        view.applyTheme(newTheme)
+        applyThemeToAllViews(newTheme)
         Task.detached { [paths] in
             try? paths.writeConfig(themeName: newTheme.configName)
         }
@@ -271,7 +362,7 @@ public final class TerminalSession: ObservableObject {
     /// re-laying out the whole session dozens of times per drag.
     public func resize(to size: CGSize) {
         guard case .running = state else { return }
-        let grid = view.gridSize(for: size)
+        let grid = font.gridSize(for: size)
         if let last = lastReportedGrid, last == grid { return }
 
         resizeDebounce?.cancel()
@@ -285,7 +376,7 @@ public final class TerminalSession: ObservableObject {
     private func sendResize(_ grid: (columns: UInt16, rows: UInt16)) {
         guard let connection else { return }
         lastReportedGrid = grid
-        let cell = view.cellSize
+        let cell = font.cellSize
         try? connection.send(
             WireEncoder.resize(
                 columns: grid.columns,
@@ -299,7 +390,11 @@ public final class TerminalSession: ObservableObject {
     /// Returns keyboard focus to the terminal. The sidebar's SwiftUI controls
     /// take first responder when clicked and never hand it back.
     public func focusTerminal() {
-        view.window?.makeFirstResponder(view)
+        // With one view per pane, focus goes to the focused pane's view. The
+        // whole-grid view is the fallback, which is also what is on screen while
+        // a crossing modal is up.
+        let target = router.focusedPaneId.flatMap { paneViews[$0] } ?? wholeGridView
+        target.window?.makeFirstResponder(target)
     }
 
     public func shutdown() {
