@@ -41,7 +41,7 @@
 >
 > **二、fixture 内联，不用外部文件。** 原计划写的 `Bundle.module` 是 SPM 的 API，在 xcodegen 生成的 Xcode 工程里不存在，代码编译不过；而给测试 bundle 加 resources build phase 是引入一套新机制。项目既有的 golden fixture 全是内联字面量（`WireDecoderTests.swift:6` 的 `twoByOneFramePayload`），跟随它。CLAUDE.md 要求的是「fixture 的内容来自观察到的字节」，不是「必须是外部文件」——内联同样满足，且不会出现一个没人读的孤立文件慢慢腐烂。抓取命令写在测试注释里，任何人都能重抓一份对照。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `Tests/HerdaKitTests/LayoutSnapshotTests.swift`：
 
@@ -189,13 +189,13 @@ final class LayoutSnapshotTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "PaneLayoutSnapshot|error:" | head -5`
 
 Expected: 编译失败 —— `cannot find 'PaneLayoutSnapshot' in scope`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `Sources/HerdaKit/Layout/LayoutSnapshot.swift`：
 
@@ -307,7 +307,7 @@ public struct PaneLayoutEnvelope: Decodable, Sendable {
 }
 ```
 
-- [ ] **Step 4: 重新生成工程收录新目录**
+- [x] **Step 4: 重新生成工程收录新目录**
 
 `Sources/HerdaKit/Layout/` 是新目录。`project.yml` 的 target 按路径递归收录，所以只要重新生成：
 
@@ -315,13 +315,13 @@ Run: `xcodegen generate && echo ok`
 
 Expected: `ok`，且 `herda.xcodeproj` 里出现 `Layout` 组。fixture 已内联，无需 resources 声明。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 （`herda.xcodeproj` 是生成物，不入库。）
 
@@ -348,7 +348,7 @@ gap is where the native card border goes, so losing it would be silent."
 - Create: `Sources/HerdaKit/Layout/LayoutGeometry.swift`
 - Create: `Tests/HerdaKitTests/LayoutGeometryTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```swift
 import CoreGraphics
@@ -465,13 +465,13 @@ final class LayoutGeometryTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "LayoutGeometry|error:" | head -5`
 
 Expected: `cannot find 'LayoutGeometry' in scope`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `Sources/HerdaKit/Layout/LayoutGeometry.swift`：
 
@@ -538,13 +538,13 @@ public enum LayoutGeometry {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Layout/LayoutGeometry.swift Tests/HerdaKitTests/LayoutGeometryTests.swift
@@ -572,7 +572,7 @@ UInt16 — out-of-bounds drags hand AppKit negative points."
 - Create: `Sources/HerdaKit/Layout/FrameSlice.swift`
 - Create: `Tests/HerdaKitTests/FrameSliceTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```swift
 import XCTest
@@ -685,13 +685,13 @@ final class FrameSliceTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "FrameSlice|error:" | head -5`
 
 Expected: `cannot find 'FrameSlice' in scope`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `Sources/HerdaKit/Layout/FrameSlice.swift`：
 
@@ -771,13 +771,13 @@ public enum FrameSlice {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Layout/FrameSlice.swift Tests/HerdaKitTests/FrameSliceTests.swift
@@ -804,7 +804,7 @@ layout_updated there is a frame where the rect describes the previous size."
 
 计划一已经用 config 关掉了 herdr 主动弹出的 modal，但 prefix key 主动按出来的（Navigator / GlobalMenu / KeybindHelp）仍会画在整块 grid 上并跨越 pane 边界。切割后它会被卡片间距切开，落在间隙格上的内容会丢失。这个函数给 view 层一个信号：此时退回整块渲染。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```swift
 import XCTest
@@ -884,13 +884,13 @@ final class GapProbeTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "GapProbe|error:" | head -5`
 
 Expected: `cannot find 'GapProbe' in scope`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `Sources/HerdaKit/Layout/GapProbe.swift`：
 
@@ -942,13 +942,13 @@ public enum GapProbe {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Layout/GapProbe.swift Tests/HerdaKitTests/GapProbeTests.swift
@@ -974,7 +974,7 @@ when a workspace gets a second tab, and it deserves the same fallback."
 - Create: `Tests/HerdaKitTests/ScrollbarGeometryTests.swift`
 - Modify: `Tests/HerdaKitTests/ApiTypesTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `Tests/HerdaKitTests/ScrollbarGeometryTests.swift`：
 
@@ -1073,13 +1073,13 @@ final class ScrollbarGeometryTests: XCTestCase {
     }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `Scripts/test.sh 2>&1 | grep -E "ScrollbarGeometry|scroll|error:" | head -5`
 
 Expected: `cannot find 'ScrollbarGeometry' in scope` 以及 `PaneInfo has no member 'scroll'`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `Sources/HerdaKit/Terminal/ScrollbarGeometry.swift`：
 
@@ -1143,7 +1143,7 @@ public struct PaneScrollInfo: Decodable, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `Scripts/test.sh 2>&1 | tail -5`
 
@@ -1151,7 +1151,7 @@ Expected: 全部通过。若 `PaneInfo` 的其它构造点报错（`SidebarModel
 
 Run: `Scripts/test.sh 2>&1 | grep -E "missing argument|error:" | head -5`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add Sources/HerdaKit/Terminal/ScrollbarGeometry.swift Sources/HerdaKit/Protocol/ApiTypes.swift Tests/HerdaKitTests/ScrollbarGeometryTests.swift Tests/HerdaKitTests/ApiTypesTests.swift
