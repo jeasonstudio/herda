@@ -4,9 +4,12 @@ import Foundation
 public enum WireEncoder {
     private enum Variant: UInt64 {
         case hello = 0
+        case input = 1
         case resize = 3
         case detach = 4
+        case attachScroll = 6
         case inputEvents = 7
+        case controlTerminal = 9
     }
 
     private enum RenderEncoding: UInt64 {
@@ -17,15 +20,26 @@ public enum WireEncoder {
         case server = 0
     }
 
-    private enum LaunchMode: UInt64 {
+    /// Mirrors `ClientLaunchMode` (`wire.rs:57`).
+    ///
+    /// `terminalAttach` does not attach on its own: it sets the server's
+    /// `pending_terminal_attach` flag (`client_transport.rs:566`) while the mode
+    /// stays `App`, which is exactly what `client_is_pending_terminal_mode`
+    /// requires before it will accept a `ControlTerminal`
+    /// (`headless.rs:2672`). It also keeps the connection out of
+    /// `is_full_app_client` (`clients.rs:176`), so it never becomes foreground
+    /// and never drives `effective_size`.
+    public enum LaunchMode: UInt64, Sendable {
         case app = 0
+        case terminalAttach = 1
     }
 
     public static func hello(
         columns: UInt16,
         rows: UInt16,
         cellWidth: UInt32,
-        cellHeight: UInt32
+        cellHeight: UInt32,
+        launchMode: LaunchMode = .app
     ) -> [UInt8] {
         var out = Varint.encode(Variant.hello.rawValue)
         out += Varint.encode(UInt64(HerdaKit.protocolVersion))
@@ -35,8 +49,83 @@ public enum WireEncoder {
         out += Varint.encode(UInt64(cellHeight))
         out += Varint.encode(RenderEncoding.semanticFrame.rawValue)
         out += Varint.encode(Keybindings.server.rawValue)
-        out += Varint.encode(LaunchMode.app.rawValue)
+        out += Varint.encode(launchMode.rawValue)
         return out
+    }
+
+    /// Switches a pending-attach connection into writable control of one pane.
+    ///
+    /// `target` accepts a pane id: `resolve_terminal_target_id_string`
+    /// (`headless.rs:1666`) falls through to `app.resolve_terminal_target`, and
+    /// herdr's own test asserts a pane id resolves (`app/mod.rs:4191`).
+    ///
+    /// `takeover` matters because one terminal allows a single writable owner
+    /// (`terminal_attach_owners`). A previous instance killed with SIGKILL never
+    /// sent `Detach`, so its ownership can outlive it and lock the pane out.
+    public static func controlTerminal(target: String, takeover: Bool) -> [UInt8] {
+        var out = Varint.encode(Variant.controlTerminal.rawValue)
+        out += string(target)
+        out.append(takeover ? 1 : 0)
+        return out
+    }
+
+    /// Raw bytes straight to the pane's PTY.
+    ///
+    /// On an attached connection `apply_terminal_attach_input` passes these
+    /// through unchanged (`headless.rs:403`) — no re-encoding, no keybinding
+    /// layer. Used only for what `pane.send_keys` cannot name: Home, End,
+    /// Delete and Insert. See `TerminalKeyBytes`.
+    public static func input(_ bytes: [UInt8]) -> [UInt8] {
+        var out = Varint.encode(Variant.input.rawValue)
+        out += Varint.encode(UInt64(bytes.count))
+        out += bytes
+        return out
+    }
+
+    /// Mirrors `AttachScrollDirection`.
+    public enum ScrollDirection: UInt64, Sendable {
+        case up = 0
+        case down = 1
+    }
+
+    /// Scroll on an attached connection.
+    ///
+    /// Purpose-built for this mode: `handle_terminal_attach_scroll` requires
+    /// `ClientConnectionMode::TerminalAttach` (`headless.rs:1791`) and decides
+    /// per pane whether to move host scrollback or forward to the child
+    /// application. `pageKeyInput` carries the original key bytes for the case
+    /// where the child owns the page keys — which is how PageUp and PageDown
+    /// travel, since herdr's API cannot name them.
+    public static func attachScroll(
+        direction: ScrollDirection,
+        lines: UInt16,
+        column: UInt16?,
+        row: UInt16?,
+        modifiers: Modifiers,
+        pageKeyInput: [UInt8]? = nil
+    ) -> [UInt8] {
+        var out = Varint.encode(Variant.attachScroll.rawValue)
+        // AttachScrollSource: Wheel = 0, PageKey { input } = 1.
+        if let pageKeyInput {
+            out += Varint.encode(1)
+            out += Varint.encode(UInt64(pageKeyInput.count))
+            out += pageKeyInput
+        } else {
+            out += Varint.encode(0)
+        }
+        out += Varint.encode(direction.rawValue)
+        out += Varint.encode(UInt64(lines))
+        out += option(column)
+        out += option(row)
+        out.append(modifiers.rawValue)     // u8, raw byte
+        return out
+    }
+
+    /// bincode's `Option`: a 0/1 tag byte, then the payload. The same shape the
+    /// `generated_text: None` byte in `key()` already relies on.
+    private static func option(_ value: UInt16?) -> [UInt8] {
+        guard let value else { return [0] }
+        return [1] + Varint.encode(UInt64(value))
     }
 
     public static func resize(
