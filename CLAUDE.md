@@ -178,7 +178,8 @@ the protocol details and the accepted non-goals. `docs/plan-m*.md` are per
 milestone and end with the acceptance results, including defects found during
 acceptance and their root cause.
 
-Two parts of `design.md` have been overtaken by later work and are known stale:
-the sidebar is now hidden with `sidebar_start_collapsed` rather than a one-shot
-keypress, and the §11 claim that per-cell drawing is fast enough was disproved by
-measurement. Fix them when you next touch that file.
+`design.md` records what a decision replaced and why, not just the current
+answer — the one-shot keypress that could not hold the sidebar collapsed, and the
+per-cell drawing that measurement disproved, are both still written down next to
+what took over. Keep that when editing it: the rejected alternative is usually
+the part worth knowing.

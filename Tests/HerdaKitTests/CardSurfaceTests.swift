@@ -39,7 +39,11 @@ final class CardSurfaceTests: XCTestCase {
                 theme.chrome.windowBackground.color
                 Color.clear
                     .frame(width: 60, height: 60)
-                    .cardSurface(fill: theme.chrome.panelBackground, theme: theme)
+                    .cardSurface(
+                        fill: theme.chrome.panelBackground,
+                        over: theme.chrome.windowBackground,
+                        theme: theme
+                    )
             }
             .frame(width: 160, height: 160)
 
@@ -68,7 +72,11 @@ final class CardSurfaceTests: XCTestCase {
             theme.chrome.windowBackground.color
             Color.clear
                 .frame(width: 60, height: 60)
-                .cardSurface(fill: theme.chrome.panelBackground, theme: theme)
+                .cardSurface(
+                    fill: theme.chrome.panelBackground,
+                    over: theme.chrome.windowBackground,
+                    theme: theme
+                )
         }
         .frame(width: 160, height: 160)
 
@@ -79,5 +87,42 @@ final class CardSurfaceTests: XCTestCase {
 
         XCTAssertEqual(face, window, "terminal 的两个面本该同色")
         XCTAssertGreaterThanOrEqual(abs(border - window), 3, "描边没把卡片勾出来")
+    }
+
+    /// 提示卡片(启动中 / 出错时覆盖在终端上的那张)是**第二层**:它浮在终端
+    /// 卡片上,不是浮在窗口底上。所以它的 `over` 是 `panelBackground`,描边
+    /// 相对终端卡片派生 —— 这正是 `over` 需要是参数而不是写死
+    /// `windowBackground` 的理由。
+    ///
+    /// 只在错误路径上出现,手工触发要动到 herdr 二进制;离屏渲染反而能把 18 个
+    /// 主题一次覆盖完。
+    func testOverlayCardIsVisibleAgainstTheTerminalCard() throws {
+        for theme in ThemeCatalog.all {
+            let view = ZStack {
+                theme.chrome.panelBackground.color
+                Color.clear
+                    .frame(width: 60, height: 60)
+                    .cardSurface(
+                        fill: theme.chrome.sidebarBackground,
+                        over: theme.chrome.panelBackground,
+                        theme: theme
+                    )
+            }
+            .frame(width: 160, height: 160)
+
+            let rep = try render(view)
+            let under = try luminance(rep.colorAt(x: 5, y: 80))
+            let border = try luminance(rep.colorAt(x: 50, y: 80))
+            let face = try luminance(rep.colorAt(x: 80, y: 80))
+
+            XCTAssertGreaterThanOrEqual(
+                abs(border - under), 3,
+                "\(theme.configName): 提示卡片的描边与终端卡片同色"
+            )
+            XCTAssertGreaterThanOrEqual(
+                abs(face - under), 3,
+                "\(theme.configName): 提示卡片的面与终端卡片同色"
+            )
+        }
     }
 }

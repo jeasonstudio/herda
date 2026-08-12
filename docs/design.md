@@ -98,22 +98,21 @@ XDG_STATE_HOME    = <Support>/runtime/state
 App 启动前在 `<Support>/runtime/config/herdr/config.toml` 写入：
 
 ```toml
-[ui]
-sidebar_collapsed_mode = "hidden"
+onboarding = false
 
-[keys]
-toggle_sidebar = "ctrl+alt+f20"
+[ui]
+sidebar_start_collapsed = true
+sidebar_collapsed_mode = "hidden"
+hide_tab_bar_when_single_tab = true
 ```
 
-`Hidden` 模式使 `sidebar_w = 0`，完全不占宽度（`src/ui.rs:229`）。
+`Hidden` 模式使 `sidebar_w = 0`，完全不占宽度（`src/ui.rs:229`）。`sidebar_start_collapsed` 让它从第一帧起就是收起的。
 
-把 `toggle_sidebar` 显式绑到 `ctrl+alt+f20` 有三个好处：
+**这里原本是另一套做法：绑一个 `toggle_sidebar = "ctrl+alt+f20"`，启动后发一次该按键把 sidebar toggle 掉**（当时 `sidebar_collapsed` 只是运行时状态，config 没有对应初始值）。那套方案不只是不优雅，是**不成立**：sidebar 的收起状态会被服务端的 workspace 操作重新展开，一次性按键压不住，切几个 workspace 它就回来了。改用 config 项后与后续状态无关。
 
-1. 用户不可能误触把 sidebar 弄回来，因此**不需要在输入层做拦截**。
-2. 键位在自己控制下，不受上游默认值变动影响。
-3. **避开 `Char` 的 bincode 编码。** 默认的 `prefix+b` 要求先发 `ctrl+b`，即 `ClientKeyCode::Char('b')`；而 `char` 在 bincode 中的表示未经验证。改用带 modifier 的功能键后，只需 `F(u8)` 变体（变体序号 16，payload 为单字节），M1 无需实现 `Char` 编码。
+连带作废的还有当时选 `ctrl+alt+f20` 的第三个理由——「避开 `Char` 的 bincode 编码」。既然不再发这个按键，M1 也就不需要为它实现 `Key` 编码；`char` 的表示后来照样验证了（见 §5 与 §11）。
 
-语法依据：`parse_key_combo`（`src/config/keybinds.rs:1201`）按 `+` 分割并识别 modifier token；`keybinds.rs:1259` 的 `s.starts_with('f') => s[1..].parse::<u8>()` 将 `f20` 解析为 `KeyCode::F(20)`。`modifiers: u8` 直接经 `KeyModifiers::from_bits_truncate` 还原（`src/protocol/wire.rs:305`），故 `ctrl+alt` = `2 | 4` = `6`（crossterm 0.29 位定义：SHIFT=1、CONTROL=2、ALT=4、SUPER=8）。
+`onboarding = false` 必须是顶层键且置于所有 `[section]` 之前，否则会被当作该 section 的键而静默失效——已有测试守护此顺序，根因见 §11。`hide_tab_bar_when_single_tab` 去掉字符绘制的 tab 行，它列的是原生侧边栏已经在显示的同一批 workspace；workspace 有第二个 tab 时该行会回来，tab 仍由 herdr 绘制。
 
 ### 启动序列（顺序敏感）
 
@@ -123,12 +122,9 @@ toggle_sidebar = "ctrl+alt+f20"
 4. `ApiClient` 连 API socket，`ping` 确认存活
 5. `ClientProtocolConn` 连 client socket，发 `Hello{App, SemanticFrame, cols, rows}`；`cols`/`rows` 由终端区视图的像素尺寸除以 cell 尺寸得出（cell 尺寸取自所选等宽字体的 advance width 与 line height）
 6. 收 `Welcome`，**校验 `version == 19`，不等则报错退出**，不尝试兼容
-7. 发一次 `ctrl+alt+f20`（§4 中自己绑定的键位）隐藏 sidebar
-8. 开始收帧渲染；`ApiClient` 订阅事件，侧边栏上线
+7. 开始收帧渲染；`ApiClient` 订阅事件，侧边栏上线
 
-第 7 步是方案 A 唯一的 hack。原因：`sidebar_collapsed` 是运行时状态（`src/app/state.rs:1873` 默认 `false`），config 无对应初始值，persist 也不保存它，API 亦无相应方法。因此只能通过按键 toggle 一次。
-
-注意这意味着 **M1 需要 `InputEvents` 的 `Key` 编码能力**（用于发出这一次按键），即使 M1 不处理用户输入。M2 只是把用户事件接进这条已经打通的路径。
+这里曾有一步「发一次 `ctrl+alt+f20` 隐藏 sidebar」，是方案 A 唯一的 hack。它已被 config 里的 `sidebar_start_collapsed` 取代——原因不是嫌它丑，而是它压不住：服务端的 workspace 操作会重新展开 sidebar。因此 M1 也不再需要为这一步实现 `InputEvents` 的 `Key` 编码；输入编码是 M2 的事。
 
 ### 关闭
 
@@ -150,8 +146,9 @@ herda/
       Runtime/     HerdrRuntime · RuntimePaths
       Protocol/    Varint · ByteReader · Framing · WireTypes
                    WireEncoder · WireDecoder · ClientProtocolConn · ApiClient
-      Terminal/    CharWidth · TerminalColor · TerminalGridView · InputTranslator
-      Sidebar/     SidebarViewModel
+      Terminal/    CharWidth · TerminalColor · TerminalGridView · KeyMap
+                   MarkedText · CellGeometry · GlyphCache · TerminalFont
+      Sidebar/     SidebarModel · AgentEntry · PathLabel
       Theme/       Theme · ThemeCatalog · ChromeSurfaces
                    ChromeMetrics · CardSurface
     Herda/                         # application：仅 UI 入口
@@ -172,11 +169,11 @@ herda/
 | `WireCodec` | bincode varint + framing + 消息编解码 | 无（纯函数） | IO |
 | `ClientProtocolConn` | 一条 client socket 的握手与收发循环 | `WireCodec` | 渲染、布局 |
 | `TerminalGridView` | `FrameData` → Core Text 绘制 | `CharWidth` | 输入、协议 |
-| `InputTranslator` | `NSEvent` → `ClientInputEvent`（M2） | `CharWidth`（鼠标坐标换算） | IO |
+| `KeyMap` | `NSEvent` → wire key，并决定哪些事件必须绕过输入法 | `WireEncoder` | IO、渲染 |
 | `ApiClient` | NDJSON 请求 + `events.subscribe` | 无 | wire 协议 |
-| `SidebarViewModel` | workspace / agent 状态与用户意图 | `ApiClient` | 终端 |
+| `SidebarModel` | workspace / agent 状态与用户意图 | `ApiClient` | 终端 |
 
-`WireCodec`、`InputTranslator`、`CharWidth` 为纯函数，承载最易出错的逻辑，也是唯一值得写单测的部分。
+`WireCodec`、`KeyMap`、`CharWidth` 为纯函数，承载最易出错的逻辑，也是唯一值得写单测的部分。
 
 ### 协议实现要点
 
@@ -221,8 +218,8 @@ enum 按变体序号（varint）编码；`String` / `Vec<T>` 为 varint 长度�
 
 ```
 渲染   server ─client socket→ ClientProtocolConn → WireCodec.decode → FrameData → TerminalGridView
-输入   NSEvent → InputTranslator → ClientInputEvent → WireCodec.encode ─client socket→ server
-侧边栏 server ─API socket→ ApiClient(events.subscribe) → SidebarViewModel → SidebarView
+输入   NSEvent → KeyMap → ClientInputEvent → WireCodec.encode ─client socket→ server
+侧边栏 server ─API socket→ ApiClient(events.subscribe) → SidebarModel → SidebarView
 ```
 
 两条通道完全独立：渲染卡住不影响侧边栏，反之亦然。这是方案 A 顺带得到的好处——终端区是一整块，无需协调 N 条连接。
@@ -233,9 +230,9 @@ enum 按变体序号（varint）编码；`String` / `Vec<T>` 为 varint 长度�
 
 ### M1 — 能看到画面
 
-内嵌 binary 与进程生命周期、隔离的 config/socket、client socket 与 wire 编解码、启动时隐藏 sidebar、`FrameData` → Core Text 渲染（宽字符、三种颜色编码、modifier、光标）。
+内嵌 binary 与进程生命周期、隔离的 config/socket、client socket 与 wire 编解码、由 config 让 herdr 自己的 sidebar 从第一帧起收起、`FrameData` → Core Text 渲染（宽字符、三种颜色编码、modifier、光标）。
 
-不处理用户输入，但**需实现 `InputEvents` 的 `Key` 编码**——启动序列第 7 步要用它隐藏 sidebar。
+不处理用户输入，也不需要 `InputEvents` 的 `Key` 编码——原先要它是为了发那一次 toggle 按键，改用 config 后这条依赖消失，输入编码整体落到 M2。
 
 验收：无 sidebar 残留 · 中文行不错位（`CharWidth` 对照测试通过）· 颜色与 TUI 一致 · 输出滚动流畅
 
@@ -293,7 +290,8 @@ sidebar 与窗口底同层同色、贴左边缘、铺满高度；只有终端是
 |---|---|
 | `WireCodecTests` | varint 往返（边界 250 / 251 / 65535 / 65536）、framing 往返、`Hello` 字节 golden test、`FrameData` 解码 fixture |
 | `CharWidthTests` | CJK / emoji / 组合字符 / Variation Selector 宽度；真实一屏的列位置对照 |
-| `InputTranslatorTests` | modifier 位映射、`prefix+b` 被拦截、IME 走 `TextCommit` |
+| `KeyMapTests` | modifier 位映射、特殊键与功能键码、哪些键绕过输入法 |
+| `MarkedTextTests` | 输入法组词的网格布局 |
 
 不测渲染像素、UI 布局、进程管理——demo 级不值得，靠手动跑。
 
@@ -314,7 +312,7 @@ sidebar 与窗口底同层同色、贴左边缘、铺满高度；只有终端是
 | 风险 | 说明 | 缓解 |
 |---|---|---|
 | ~~`CharWidth` 与 ghostty-vt 不一致~~ **（M1 已排除）** | 原判断为最大技术风险 | 系统 `wcwidth` 加 emoji 预判断的组合与 ghostty-vt 一致，含 CJK、emoji、框线字符，经真实内容人眼确认无错位 |
-| ~~渲染性能不足~~ **（M1 已排除）** | 担心逐 cell 绘制过慢 | `seq 1 400000` 快速滚动无卡顿，不需要合并 run |
+| 渲染性能不足 | 担心逐 cell 绘制过慢 | M1 曾据 `seq 1 400000` 滚动不卡而判定"不需要合并 run"，**后来的测量推翻了它**。现在一帧按 pass 分组绘制而非逐 cell：背景合并成 `BackgroundRun` 连续矩形，字形按字体与颜色聚成 batch 交给 `CTFontDrawGlyphs`。分 pass 还解决了逐 cell 表达不了的问题（块元素要贴到像素栅格、整行共用一条基线），见 `TerminalGridView` 头部注释 |
 | 手写 bincode 解码器静默错位 | 结构定义抄错会产生难查的花屏 | 严格字节数校验 + golden fixture 来自真实字节 |
 | 协议版本 bump | herdr 演进会改 `PROTOCOL_VERSION` | 自带 runtime 使两者一起版本化；启动时严格校验并明确报错 |
 | 方案 A 原生感不足 | 分隔线与 modal 仍为字符绘制 | 已知并接受；验证成立后可走向 per-pane 原生 view |
