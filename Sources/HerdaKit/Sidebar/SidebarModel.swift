@@ -21,6 +21,15 @@ public final class SidebarModel: ObservableObject {
 
     public init() {}
 
+    /// The tab the terminal area is showing, when known.
+    ///
+    /// Needed because `layout_updated` arrives for tabs that are not on screen —
+    /// see `PaneFrameRouter.belongsToCurrentView`.
+    public var activeTabId: String? {
+        guard let focusedWorkspaceId else { return nil }
+        return workspaces.first { $0.workspaceId == focusedWorkspaceId }?.activeTabId
+    }
+
     public func apply(_ snapshot: SessionSnapshot) {
         workspaces = snapshot.workspaces.sorted { $0.number < $1.number }
         panesById = Dictionary(

@@ -42,6 +42,14 @@ public struct WorkspaceInfo: Decodable, Identifiable, Sendable {
     public let paneCount: Int
     public let tabCount: Int
     public let agentStatus: AgentStatus
+    /// The tab currently showing for this workspace. Optional because the field is
+    /// not required on the wire.
+    ///
+    /// Load-bearing for the native split layout: `layout_updated` is emitted per
+    /// (workspace, tab) including for tabs that are not showing, and this is the
+    /// only way to tell which one the terminal area is actually displaying. See
+    /// `PaneFrameRouter.belongsToCurrentView`.
+    public let activeTabId: String?
 
     public var id: String { workspaceId }
 }
