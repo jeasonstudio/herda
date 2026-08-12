@@ -64,12 +64,32 @@ launch() {
 reset_session() {
   # Only the process holding this exact socket, so a herdr session of the user's
   # own is never a candidate.
+  local server=""
   if [ -S "$RUNTIME/herdr.sock" ]; then
-    local server
     server=$(lsof -t "$RUNTIME/herdr.sock" 2>/dev/null || true)
     [ -n "$server" ] && kill "$server" 2>/dev/null || true
   fi
   pkill -9 -f "$EXECUTABLE" 2>/dev/null || true
+
+  # Wait for the server to actually exit before deleting anything. It saves the
+  # session on its way down, and that write used to land after the rm -rf and
+  # recreate config/herdr/session.json — so the next server restored the very
+  # state this was meant to discard. Caught with a "fresh" session that came up
+  # with three panes numbered p1/p4/p2 and next_public_pane_number already at 6,
+  # remembering a pane created minutes earlier.
+  if [ -n "$server" ]; then
+    local waited=0
+    while kill -0 "$server" 2>/dev/null; do
+      if [ "$waited" -ge 50 ]; then
+        kill -9 "$server" 2>/dev/null || true
+        sleep 0.2
+        break
+      fi
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+  fi
+
   rm -rf "$RUNTIME"
   echo "discarded the embedded server's session"
 }
