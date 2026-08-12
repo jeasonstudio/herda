@@ -4,7 +4,7 @@
 
 > **已被部分修订（2026-08-12）。** 本文描述的**双卡片**形态（sidebar 与终端各一张浮起卡片）实现并跑起来之后被判定观感过碎，改为**只有终端浮起**：sidebar 与窗口底同层同色、贴左边缘、铺满高度。随之变化的还有三处：度量全部对齐 8pt 网格（本文的 12 / 10 / 14 / 6 / 34 一个都不在网格上）；分隔线与描边改为相对所在面派生（本文一律用 `hairline`，在亮色主题下与 `windowBackground` 收敛到差 0–6，描边和分隔线都会消失）；行圆角独立取 6 而不再从卡片圆角减内缩推导（sidebar 已不是卡片，「同心」没有了对象）。
 >
-> 本文保留原样以记录决策过程 —— 尤其是硬约束一到三、`windowBackground` 的分档实测、以及 `ConcentricRectangle` 被否的探针数据，这些都仍然成立。当前形态见 `docs/design.md` §3 / §7 与 `docs/plan-m4.md` 的「后续修订」。
+> 本文保留原样以记录决策过程 —— 尤其是硬约束一到三、`windowBackground` 的分档实测、以及 `ConcentricRectangle` 被否的探针数据，这些都仍然成立。当前形态直接看 `ChromeMetrics` 与 `CardSurface`：`docs/design.md` 与 `docs/plan-m4.md` 已于 2026-08-12 删除，下面「收尾」那节要求补进 design.md 的两处编辑因此作废（见 `2026-08-12-native-split-layout-design.md` 末节，那里转记了它值得留下的三条）。
 
 ## 目标
 
@@ -239,6 +239,8 @@ public struct CardSurface: ViewModifier {
 13pt 字号下 cell 约 8×17pt，即约少 3 列、1 行。高度这 16pt 不能靠减小 `cardTopInset` 找回——那条 28pt 是硬约束二。要找回只能减 `cardInset` 或 `gridInset`，两者都会削弱刚建立的层次，本次不做。
 
 ## 收尾
+
+**本节已作废：`docs/design.md` 于 2026-08-12 删除。** 原文保留如下,因为它记录了当时查证的结果。
 
 `docs/design.md` 里**没有**窗口 chrome 一节（`titlebar` / `hairline` / `hiddenTitleBar` 全无命中），所以不存在"被取代的一节"。要补的是两处：
 

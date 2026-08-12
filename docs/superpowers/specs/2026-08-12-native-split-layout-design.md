@@ -246,8 +246,12 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 
 ## 需要更正的既有记录
 
-`docs/design.md` **已不在仓库中**（`8c314ac chore: rm old plans` 同期删除）。第一版 spec 里那节「design.md 需要更正的记录」因此悬空，本文不再引用 design.md 的任何章节编号。
+`docs/design.md` 已删除，不再恢复。它累积了四个里程碑的决策，直到其中几处过时而没有任何东西标记出来 —— 仍写着用一次性按键折叠 sidebar（实际早已换成 `sidebar_start_collapsed`），仍声称逐格绘制足够快（实测已推翻）。按变更分档的 spec 会**显性**过时：每份都有日期、只管自己决定的那件事。
 
-如果 design.md 要恢复（`git checkout 8c314ac^ -- docs/design.md`），需要更正的至少有：§10「明确不做：原生 split 布局」（本文推翻）、§3 决策表「server 排版 + 原生外壳」（本文推翻其前提）、以及「herdr 无 channel 可 retheme 运行中的 server」这条 —— `server.reload_config` 存在（`app/api.rs:921` → `app/mod.rs:1334` → `apply_live_config`，其中有 `theme_runtime` 重建与 `refresh_effective_app_theme()`），运行中可换主题。
+它里面三条与本文相关的记录转记在这里，因为它们仍有价值：
 
-`docs/superpowers/plans/2026-08-12-native-split-0{1,2,3,4}-*.md` 四份计划实现的是第一版方案，随本文作废。
+- **「明确不做：原生 split 布局」** —— 本文推翻。
+- **「server 排版 + 原生外壳，布局子系统工作量为零」** —— 前提被推翻。工作量不是零，是被推到了「必须靠启发式修正一个错误前提」上。
+- **「herdr 暴露无 channel 来 retheme 运行中的 server」** —— 事实错误。`server.reload_config` 存在（`app/api.rs:921` → `app/mod.rs:1334` → `apply_live_config`，其中有 `theme_runtime` 重建与 `refresh_effective_app_theme()`），运行中可以换主题。
+
+第一版的四份计划（`native-split-0{1,2,3,4}`）已随方案一并删除。

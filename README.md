@@ -157,12 +157,11 @@ it is accepted.
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — the working guide: toolchain, the edit
   loop, driving the embedded server from a shell, and how rendering, input and
   protocol changes are verified
-- [`docs/design.md`](docs/design.md) — process model, isolation scheme, protocol
-  details, decision record, accepted risks
-- [`docs/plan-m1.md`](docs/plan-m1.md),
-  [`plan-m2.md`](docs/plan-m2.md),
-  [`plan-m3.md`](docs/plan-m3.md) — per-milestone plans, each ending with its
-  acceptance results and the defects acceptance found
+- [`docs/superpowers/specs/`](docs/superpowers/specs) — one design per change:
+  process model, isolation scheme, protocol details, hard constraints, and the
+  alternatives that were rejected and why
+- [`docs/superpowers/plans/`](docs/superpowers/plans) — the implementation plan
+  each spec produced, ending with what acceptance actually found
 - [`CLAUDE.md`](CLAUDE.md) — conventions and verification discipline for agents
   working in this repo
 

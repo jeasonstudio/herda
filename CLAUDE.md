@@ -187,13 +187,20 @@ Propose the commit message and get alignment before committing.
 
 ## Docs
 
-`docs/design.md` is the design of record: the process model, the isolation scheme,
-the protocol details and the accepted non-goals. `docs/plan-m*.md` are per
-milestone and end with the acceptance results, including defects found during
-acceptance and their root cause.
+`docs/superpowers/specs/` holds one design per change, dated and named for the
+topic; `docs/superpowers/plans/` holds the implementation plan each spec produced.
+A spec is the design of record for its area — process model, protocol details,
+hard constraints, accepted non-goals — and a plan ends with what acceptance
+actually found.
 
-`design.md` records what a decision replaced and why, not just the current
-answer — the one-shot keypress that could not hold the sidebar collapsed, and the
-per-cell drawing that measurement disproved, are both still written down next to
-what took over. Keep that when editing it: the rejected alternative is usually
-the part worth knowing.
+There is no single `design.md`. There was, and it accumulated four milestones of
+decisions until parts of it were stale in ways nothing flagged: it still described
+a one-shot keypress for collapsing the sidebar, and still claimed per-cell drawing
+was fast enough after measurement had disproved it. Per-change specs go stale
+visibly instead, because each one is dated and scoped to what it decided.
+
+**Record what a decision replaced and why, not just the current answer.** The
+rejected alternative is usually the part worth knowing, and this repo has the
+scars to prove it: the native-split spec keeps its own first design — cell-grid
+slicing with a blank-gap heuristic — next to the one that replaced it, because
+every problem that design had followed from its premise rather than from a bug.
