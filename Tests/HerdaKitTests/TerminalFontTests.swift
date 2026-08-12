@@ -73,4 +73,23 @@ final class TerminalFontTests: XCTestCase {
     func testSnapToDevicePixelsToleratesAnInvalidScale() {
         XCTAssertEqual(snapToDevicePixels(10.6, scale: 0), 11)
     }
+
+    func testGridSizeDividesBySizeOfACell() {
+        // TerminalSession still reports the whole terminal area's cols/rows for
+        // the app connection, but it no longer owns a single view — there is one
+        // per pane now — so the measurement lives on the type that owns cellSize.
+        let font = TerminalFont(size: 13)
+        let cell = font.cellSize
+        let grid = font.gridSize(for: CGSize(width: cell.width * 80, height: cell.height * 24))
+        XCTAssertEqual(grid.columns, 80)
+        XCTAssertEqual(grid.rows, 24)
+    }
+
+    func testGridSizeNeverReportsZero() {
+        // Startup and resize both pass through .zero, and a handshake declaring
+        // zero columns is rejected by the server.
+        let grid = TerminalFont(size: 13).gridSize(for: .zero)
+        XCTAssertEqual(grid.columns, 1)
+        XCTAssertEqual(grid.rows, 1)
+    }
 }

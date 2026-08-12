@@ -75,9 +75,7 @@ public final class TerminalGridView: NSView {
     }
 
     public func gridSize(for size: CGSize) -> (columns: UInt16, rows: UInt16) {
-        let columns = max(1, Int(size.width / cellSize.width))
-        let rows = max(1, Int(size.height / cellSize.height))
-        return (UInt16(min(columns, Int(UInt16.max))), UInt16(min(rows, Int(UInt16.max))))
+        terminalFont.gridSize(for: size)
     }
 
     public func update(_ frame: GridFrame) {

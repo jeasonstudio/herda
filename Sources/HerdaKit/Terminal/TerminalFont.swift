@@ -73,6 +73,18 @@ public struct TerminalFont {
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
+    /// How many cells fit in a given pixel size.
+    ///
+    /// This lives here rather than on the view because `TerminalSession` still
+    /// reports the whole terminal area's cols/rows for the app connection, while
+    /// no longer owning a single view — there is one per pane. The measurement
+    /// belongs to whatever owns `cellSize`.
+    public func gridSize(for size: CGSize) -> (columns: UInt16, rows: UInt16) {
+        let columns = max(1, Int(size.width / cellSize.width))
+        let rows = max(1, Int(size.height / cellSize.height))
+        return (UInt16(min(columns, Int(UInt16.max))), UInt16(min(rows, Int(UInt16.max))))
+    }
+
     /// Horizontal advance of one cell, taken from the font's glyph metrics
     /// rather than a laid-out string: `NSString.size(withAttributes:)` reports
     /// a typographic width that can include side bearing padding.
