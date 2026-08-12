@@ -225,9 +225,22 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 
 1. **attach 连接会收到哪些 `ServerMessage`。** 已知有帧和 `ServerShutdown`（终端消失时 reason 为 `terminal attach ended: ...`，`headless.rs:4125`）。`Notify` / `SetTitle` / `ReloadSoundConfig` 是否也发、`Handshake` 回什么尺寸，要抓一次真实字节。
 2. **zoom 时非焦点 pane 的 PTY 尺寸怎么处理。** 保持原尺寸最简单，但焦点 pane 铺满后要 resize；退出 zoom 再改回去会让子应用重排两次。可能更好的做法是 zoom 期间不动任何 PTY 尺寸，只改渲染。要实测子应用的观感。
-3. **Home / End 的 CSI 形在真实应用里够不够。** 词表洞已实测确认（已验证事实五），解法已定，但 `ESC[H`/`ESC[F` 对 application cursor mode 下的 vim / less / nano / zsh 行编辑要逐个试过。若某个应用只认 `ESCOH`，记下来并考虑是否值得推动 herdr 补词表。
+3. ~~**Home / End 的 CSI 形在真实应用里够不够。**~~ **已实测结案：CSI 形是错的，改用 SS3。**
 
-   **这一项必须等 pane 连接就位（计划三）才能测。** 实测确认 `pane.send_text` **不能承载转义序列**：发 `ESC[H` 后 `pane read` 读回字面的 `^[[H`，因为 `encode_api_text`（`app/api_helpers.rs:25`）在 bracketed paste 开启时把负载包进 `ESC[200~…ESC[201~`，而中和控制序列正是 bracketed paste 的用途。所以这六个键**没有 API 捷径**，只能走原始 `Input`——这条顺带把「图省事用 send_text」的路堵死了。
+   经真实 pane 连接的原始 `Input` 打进 zsh 行编辑器（打 `echo abc`，发序列，再打标记）：
+
+   | 序列 | 结果 | 判定 |
+   |---|---|---|
+   | `ESC [ H` | `echo abcA` | **无效**，标记落在行尾 |
+   | `ESC O H` | `Becho abc` | **有效**，标记落在行首 |
+
+   SS3 是 application cursor mode 的形式，而 shell 跑着行编辑器时该模式是开的——按 Home 最常见的地方正是那里。改用 `ESC O H` / `ESC O F` 后复测：`HOME_OK echo abcEND_OK`，两个键都对。带修饰符的仍走 CSI（`ESC [ 1 ; m H`），因为 SS3 没有参数形式。
+
+   代价说清楚：**不开 DECCKM 却期待 CSI 形的应用收不到这两个键。** 客户端观测不到模式，只能二选一。彻底修好仍然是 herdr 的 `parse_key_combo` 补上这六个名字，之后 `TerminalKeyBytes` 整个文件可以删掉。
+
+   （同时确认 `pane.send_text` **不能承载转义序列**：发 `ESC[H` 后读回字面的 `^[[H`，因为 `encode_api_text`（`app/api_helpers.rs:25`）在 bracketed paste 开启时包进 `ESC[200~…ESC[201~`，而中和控制序列正是它的用途。所以这六个键没有 API 捷径。）
+
+   未能测出的部分要说明：**vim 下的行为没有可信结论。** `-u NONE` 的 vim 把 `ESC` 当作独立的 Esc 处理，后续字节变成 normal 模式命令（`ESC[H` 那次 `X` 还删掉了一个字符），探针本身被混淆了。不硬凑解释，留作后续。
 4. **串行输入队列在真实连打下的表现。** 单次延迟已实测（硬约束三：p50 0.16ms），但串行队列在按键重复（按住方向键，约 30/秒）和输入法长串提交下要实机确认不掉字、不乱序，以及那个 105ms 离群值在连打中会不会聚集。
 5. **`herdr pane read` 等 CLI 互操作在 attach 锁定下是否照常。** 预期照常（读路径不 resize），但值得一条实测。
 

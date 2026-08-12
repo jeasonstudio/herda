@@ -22,8 +22,8 @@ final class PaneInputRouterTests: XCTestCase {
     func testTheFourUnnameableKeysGoOutAsRawBytes() {
         // Measured: herdr's API rejects these names outright, and pane.send_text
         // cannot carry escape sequences because bracketed paste neutralises them.
-        XCTAssertEqual(route(.key(.home, [])), .bytes(Array("\u{1b}[H".utf8)))
-        XCTAssertEqual(route(.key(.end, [])), .bytes(Array("\u{1b}[F".utf8)))
+        XCTAssertEqual(route(.key(.home, [])), .bytes(Array("\u{1b}OH".utf8)))
+        XCTAssertEqual(route(.key(.end, [])), .bytes(Array("\u{1b}OF".utf8)))
         XCTAssertEqual(route(.key(.delete, [])), .bytes(Array("\u{1b}[3~".utf8)))
         XCTAssertEqual(route(.key(.insert, [])), .bytes(Array("\u{1b}[2~".utf8)))
     }

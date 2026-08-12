@@ -28,6 +28,7 @@ public enum TerminalKeyBytes {
         }
     }
 
+
     /// `ESC [ n ~`, or `ESC [ n ; m ~` when modified.
     private static func tilde(_ number: Int, _ modifiers: WireEncoder.Modifiers) -> [UInt8] {
         guard let parameter = xtermParameter(modifiers) else {
@@ -36,12 +37,31 @@ public enum TerminalKeyBytes {
         return Array("\u{1b}[\(number);\(parameter)~".utf8)
     }
 
-    /// `ESC [ X`, or `ESC [ 1 ; m X` when modified. The leading 1 exists only so
-    /// the modifier has a second parameter slot to sit in — `ESC [ ; m X` is not
-    /// the same sequence.
+    /// `ESC O X` unmodified, `ESC [ 1 ; m X` when modified.
+    ///
+    /// The unmodified form is SS3, not CSI, and that was measured rather than
+    /// chosen. Through a real pane connection into zsh's line editor — type
+    /// `echo abc`, send the sequence, type a marker:
+    ///
+    /// | sequence | result |
+    /// |---|---|
+    /// | `ESC [ H` | `echo abcA` — ignored, the marker landed at the end |
+    /// | `ESC O H` | `Becho abc` — honoured, the marker landed at the start |
+    ///
+    /// SS3 is the application-cursor-mode form, and a shell running its line
+    /// editor has that mode on. A client attached to one pane cannot observe the
+    /// mode, so one form has to be picked, and this is the one that works where
+    /// Home is actually pressed. An application that never enables DECCKM and
+    /// wants the CSI form will not see it — closing that properly means herdr's
+    /// `parse_key_combo` gaining these six names, after which this whole file can
+    /// go away.
+    ///
+    /// Modified keys stay CSI because SS3 has no parameter form. The leading 1
+    /// exists only so the modifier has a second slot to sit in; `ESC [ ; m X` is
+    /// a different sequence.
     private static func cursor(_ final: String, _ modifiers: WireEncoder.Modifiers) -> [UInt8] {
         guard let parameter = xtermParameter(modifiers) else {
-            return Array("\u{1b}[\(final)".utf8)
+            return Array("\u{1b}O\(final)".utf8)
         }
         return Array("\u{1b}[1;\(parameter)\(final)".utf8)
     }

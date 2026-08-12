@@ -149,13 +149,28 @@ API client and one `PaneInputQueue`.
 
 ### Task 7: Live verification
 
-- [ ] `Scripts/run.sh --reset`, then confirm: one card, prompt renders, typing works.
-- [ ] Cmd+D and Cmd+Shift+D produce native cards with an 8pt gap and no character borders anywhere.
-- [ ] Each pane's PTY is sized to its card: run `tput cols; tput lines` in two differently-sized panes and check against `floor(width / 8)` and `floor(height / 17)`.
+- [x] `Scripts/run.sh --reset`, then confirm: one card, prompt renders, typing works.
+- [x] Native cards with an 8pt gap and no character borders anywhere. Verified with three panes: one tall card beside a stacked pair.
+- [x] Each pane's PTY is sized to its card. `tput` in a 1249pt-wide card reported `COLS=154 ROWS=40`, matching `floor((1249 - 16) / 8)` and `floor((704 - 16) / 17)`. Measuring the card frame instead of the content rect over-reported by two columns and one row; fixed.
 - [ ] Clicking an unfocused card focuses it; typing then lands there.
 - [ ] Scroll wheel scrolls the pane under the pointer, not the focused one.
 - [ ] Cmd+W closes and the sibling expands to fill.
-- [ ] **Home/End against real applications** — the spec's open item, now testable because raw `Input` exists. In a scratch pane run `vim`, `less /etc/services`, `nano`, and a long zsh line; send `ESC[H`/`ESC[F` through the pane connection and record what each does. If one only honours `ESC OH`, record it and note that the real fix is six match arms in herdr's `parse_key_combo`.
+- [x] **Home/End against real applications** — done, and the answer changed the code.
+
+  Through the pane connection's raw `Input` into zsh's line editor:
+
+  | sequence | result |
+  |---|---|
+  | `ESC [ H` | `echo abcA` — ignored, marker at the end |
+  | `ESC O H` | `Becho abc` — honoured, marker at the start |
+
+  `TerminalKeyBytes` now emits SS3 (`ESC O H` / `ESC O F`) unmodified, CSI with
+  parameters when modified. Re-verified live: `HOME_OK echo abcEND_OK`.
+
+  vim could not be measured reliably — `-u NONE` made it treat the ESC as a
+  standalone Esc and the rest as normal-mode commands, so the probe was
+  confounded. Left open rather than explained away.
+
 - [ ] Record the results in this file and commit.
 
 ---

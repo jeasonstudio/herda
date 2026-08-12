@@ -17,14 +17,15 @@ final class TerminalKeyBytesTests: XCTestCase {
         XCTAssertEqual(text(.pageDown), "\u{1b}[6~")
     }
 
-    func testEncodesHomeAndEndInTheCursorForm() {
-        // The one mode-dependent pair: xterm sends ESC[H / ESC[F normally and
-        // ESC OH / ESC OF under DECCKM. A client attached to one pane cannot
-        // observe that mode — MouseCapture is streamed only to full app clients
-        // (headless.rs:3681) and no API method or response field exposes
-        // terminal state — so the CSI form goes out unconditionally.
-        XCTAssertEqual(text(.home), "\u{1b}[H")
-        XCTAssertEqual(text(.end), "\u{1b}[F")
+    func testEncodesHomeAndEndAsSS3() {
+        // Measured, not chosen. Through a real pane connection into zsh's line
+        // editor: ESC[H was ignored and the marker landed at the end of the line,
+        // ESC OH moved to the start. SS3 is the application-cursor-mode form and
+        // a shell running its line editor has that mode on, which is where Home
+        // actually gets pressed. The mode is unobservable from an attached
+        // connection, so one form has to be picked.
+        XCTAssertEqual(text(.home), "\u{1b}OH")
+        XCTAssertEqual(text(.end), "\u{1b}OF")
     }
 
     func testEncodesModifiersInTheXtermParameterForm() {
@@ -46,7 +47,7 @@ final class TerminalKeyBytesTests: XCTestCase {
         // xterm has no bit for cmd, and a macOS cmd chord is an application
         // shortcut rather than terminal input. Dropping it is deliberate: the
         // alternative is inventing a parameter no terminal reads.
-        XCTAssertEqual(text(.home, [.command]), "\u{1b}[H")
+        XCTAssertEqual(text(.home, [.command]), "\u{1b}OH")
         XCTAssertEqual(text(.delete, [.command]), "\u{1b}[3~")
     }
 
