@@ -59,6 +59,17 @@ final class RuntimePathsTests: XCTestCase {
         XCTAssertLessThan(bordersIndex, themeIndex)
     }
 
+    func testConfigContentsSuppressesHerdrsOwnModals() {
+        // These three appear without a keypress, and a modal is drawn on the whole
+        // grid, so once the grid is sliced by pane rect it gets cut by the card
+        // gap. The ones a prefix key opens are deliberately left alone: those are
+        // user-initiated, and replacing them natively is a later stage.
+        let toml = paths.configContents(themeName: "catppuccin")
+        XCTAssertTrue(toml.contains("confirm_close = false"))
+        XCTAssertTrue(toml.contains("prompt_new_tab_name = false"))
+        XCTAssertTrue(toml.contains("prompt_new_workspace_name = false"))
+    }
+
     func testConfigContentsDisablesOnboarding() {
         // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
         // overlay, and it takes over input handling before anything else.
