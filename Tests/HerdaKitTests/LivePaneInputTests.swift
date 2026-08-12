@@ -92,9 +92,15 @@ final class LivePaneInputTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         // `source` has no default in herdr's schema (api/schema/panes.rs:254), so
         // omitting it fails the request. `format` defaults to text.
+        //
+        // `recent_unwrapped` rather than `visible`: the scratch pane is only as
+        // wide as the window makes it, and with `visible` a 62-character line
+        // wraps and the joined digits no longer appear as one substring. That
+        // made this test pass or fail on window size, which has nothing to do
+        // with ordering.
         let text = try api.request(
             method: "pane.read",
-            params: ["pane_id": pane, "source": "visible", "format": "text"],
+            params: ["pane_id": pane, "source": "recent_unwrapped", "format": "text"],
             id: "read"
         )
         XCTAssertTrue(

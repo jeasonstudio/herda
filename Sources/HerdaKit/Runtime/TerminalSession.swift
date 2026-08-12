@@ -18,24 +18,10 @@ public final class TerminalSession: ObservableObject {
     @Published public private(set) var state: State = .idle
     @Published public private(set) var theme: Theme = ThemeCatalog.default
 
-    /// One view per pane, keyed by pane id. Each renders a slice of the single
-    /// frame the server sends; there is still only one render connection.
-    @Published public private(set) var paneViews: [String: TerminalGridView] = [:]
-
-    /// Where the layout lives. `@Published` so the card grid re-lays out whenever
-    /// herdr reports a change.
-    @Published public private(set) var router = PaneFrameRouter()
-
-    /// Draws the whole frame when content crosses pane boundaries, or before a
-    /// layout has arrived. See `PaneFrameRouter.shouldRenderWholeGrid`.
-    public let wholeGridView: TerminalGridView
-
-    /// Whether the whole-grid fallback is currently in effect.
-    @Published public private(set) var isWholeGridFallback = true
+    public let view: TerminalGridView
 
     public let sidebar = SidebarModel()
 
-    private let font: TerminalFont
     private let paths: RuntimePaths
     private var runtime: HerdrRuntime?
     private var connection: ClientProtocolConn?
@@ -44,25 +30,14 @@ public final class TerminalSession: ObservableObject {
     private var statusPoll: Task<Void, Never>?
     private var resizeDebounce: Task<Void, Never>?
     private var lastReportedGrid: (columns: UInt16, rows: UInt16)?
-    /// Guards `logRouting` so the first frame is recorded once. See `distribute`.
-    private var hasLoggedFrameRouting = false
-    /// The most recent frame, kept so a layout change can be applied to it
-    /// immediately. The server de-duplicates identical frames, so waiting for the
-    /// next one would leave the new layout unused indefinitely.
-    private var lastFrame: GridFrame?
 
     public init(
         paths: RuntimePaths = .defaultLocation(),
         font: TerminalFont = TerminalFont()
     ) {
         self.paths = paths
-        self.font = font
-        self.wholeGridView = TerminalGridView(terminalFont: font)
+        self.view = TerminalGridView(terminalFont: font)
     }
-
-    /// One cell's pixel size. The view layer turns layout cell rects into frames
-    /// with it.
-    public var cellSize: CGSize { font.cellSize }
 
     public func start(viewportSize: CGSize) {
         guard case .idle = state else { return }
@@ -78,8 +53,8 @@ public final class TerminalSession: ObservableObject {
         let runtime = HerdrRuntime(paths: paths, binary: binary)
         self.runtime = runtime
 
-        let grid = font.gridSize(for: viewportSize)
-        let cell = font.cellSize
+        let grid = view.gridSize(for: viewportSize)
+        let cell = view.cellSize
         lastReportedGrid = grid
 
         Task.detached { [weak self, paths] in
@@ -90,7 +65,7 @@ public final class TerminalSession: ObservableObject {
                     ?? ThemeCatalog.default
                 await MainActor.run {
                     self?.theme = resolvedTheme
-                    self?.applyThemeToAllViews(resolvedTheme)
+                    self?.view.applyTheme(resolvedTheme)
                 }
 
                 try runtime.start(themeName: resolvedTheme.configName)
@@ -117,13 +92,13 @@ public final class TerminalSession: ObservableObject {
     private func attach(_ connection: ClientProtocolConn) {
         self.connection = connection
         state = .running
-        wholeGridView.onInput = { [weak self] input in
+        view.onInput = { [weak self] input in
             Task { @MainActor in self?.send(input) }
         }
         log("handshake ok, read loop starting")
         connection.startReadLoop(
             onFrame: { [weak self] frame in
-                Task { @MainActor in self?.distribute(frame) }
+                Task { @MainActor in self?.view.update(frame) }
             },
             onShutdown: { [weak self] reason in
                 Task { @MainActor in
@@ -142,130 +117,6 @@ public final class TerminalSession: ObservableObject {
         startApiChannel()
     }
 
-    /// Hands a frame to each pane, or draws it whole when it cannot be sliced.
-    private func distribute(_ frame: GridFrame) {
-        lastFrame = frame
-        let fallback = router.shouldRenderWholeGrid(frame)
-
-        // Logged on the first frame and on every flip, not per frame: per frame
-        // would bury the log, but logging nothing at all leaves no way to explain
-        // why the screen is one card instead of a grid of them.
-        if !hasLoggedFrameRouting || fallback != isWholeGridFallback {
-            hasLoggedFrameRouting = true
-            logRouting(frame, fallback: fallback)
-        }
-        if fallback != isWholeGridFallback { isWholeGridFallback = fallback }
-
-        if fallback {
-            wholeGridView.update(frame)
-            return
-        }
-        for (paneId, slice) in router.slices(for: frame) {
-            viewForPane(paneId).update(slice)
-        }
-    }
-
-    /// Returns a pane's view, creating it on first use. A new view gets the
-    /// current theme and the input outlet immediately — missing either leaves a
-    /// pane with the wrong palette or one that silently swallows typing.
-    private func viewForPane(_ paneId: String) -> TerminalGridView {
-        if let existing = paneViews[paneId] { return existing }
-        let view = TerminalGridView(terminalFont: font)
-        view.applyTheme(theme)
-        view.onInput = { [weak self] input in
-            Task { @MainActor in self?.send(input) }
-        }
-        paneViews[paneId] = view
-        return view
-    }
-
-    /// Adopts a new layout and drops the views of panes that are gone.
-    private func applyLayout(_ snapshot: PaneLayoutSnapshot) {
-        // herdr re-emits layout_updated about every 100ms whether or not anything
-        // changed, so this has to be idempotent: without the guard, every one of
-        // those would re-slice the frame and republish state, redrawing the whole
-        // card grid ten times a second for no result.
-        guard router.apply(snapshot) else { return }
-
-        // Only actual changes are logged — a split, a close, a resize. That keeps
-        // the log readable while still explaining the routing decision below.
-        log(
-            "layout applied: panes=\(snapshot.panes.count) zoomed=\(snapshot.zoomed)"
-                + " area=\(snapshot.area.width)x\(snapshot.area.height)"
-                + " focused=\(snapshot.focusedPaneId)"
-        )
-        // Re-arm the routing log so the next frame explains how this layout was
-        // used. Without this, a layout that arrives but still routes to the
-        // fallback is silent, which is indistinguishable from no layout at all.
-        hasLoggedFrameRouting = false
-        let live = Set(snapshot.panes.map(\.paneId))
-        for paneId in paneViews.keys where !live.contains(paneId) {
-            paneViews.removeValue(forKey: paneId)
-        }
-        for pane in LayoutGeometry.visiblePanes(in: snapshot) {
-            _ = viewForPane(pane.paneId)
-        }
-
-        // Re-run the routing decision against the frame already on screen. The
-        // server de-duplicates identical frames, so after a layout change there
-        // may be no further frame for a long time — and since the fallback flag is
-        // only recomputed in `distribute`, waiting for one would leave the new
-        // layout unused and the screen stuck on the whole-grid fallback.
-        if let lastFrame { distribute(lastFrame) }
-    }
-
-    /// Records how one frame was routed, and when it fell back, which cell caused
-    /// it. `panes=0` means no layout has arrived, which is a different failure from
-    /// a layout that arrived but has content crossing a boundary.
-    private func logRouting(_ frame: GridFrame, fallback: Bool) {
-        let panes = router.visiblePanes
-        var message = "routing frame \(frame.width)x\(frame.height)"
-            + " panes=\(panes.count) fallback=\(fallback)"
-        if fallback, !panes.isEmpty {
-            let rects = panes.map(\.rect)
-            if let offender = GapProbe.firstContentOutsidePanes(frame, panes: rects) {
-                message += " firstOutside=(col \(offender.column), row \(offender.row))"
-                    + " symbol=\(offender.symbol.debugDescription)"
-            }
-            message += " rects=" + rects
-                .map { "\($0.x),\($0.y),\($0.width)x\($0.height)" }
-                .joined(separator: " ")
-        }
-        log(message)
-    }
-
-    private func applyThemeToAllViews(_ theme: Theme) {
-        wholeGridView.applyTheme(theme)
-        for view in paneViews.values { view.applyTheme(theme) }
-    }
-
-    /// Routes one event. `layout_updated` is handled here; everything else goes to
-    /// the sidebar.
-    ///
-    /// Subscription names use dots while the pushed `event` field uses
-    /// underscores, so the match below is on the underscore form.
-    private func handle(event name: String, data: [String: Any]) {
-        guard name == "layout_updated" else {
-            sidebar.handle(event: name, data: data)
-            return
-        }
-        guard let payload = data["layout"],
-              let bytes = try? JSONSerialization.data(withJSONObject: payload),
-              let snapshot = try? ApiTypes.decoder.decode(PaneLayoutSnapshot.self, from: bytes)
-        else {
-            log("layout_updated payload did not decode")
-            return
-        }
-        // The event is emitted per (workspace, tab), including for tabs that are
-        // not showing. See `PaneFrameRouter.belongsToCurrentView` for what adopting
-        // all of them looked like.
-        guard PaneFrameRouter.belongsToCurrentView(
-            snapshot,
-            activeTabId: sidebar.activeTabId
-        ) else { return }
-        applyLayout(snapshot)
-    }
-
     /// Starts the API channel. Deliberately independent of the render channel:
     /// a stalled sidebar must not affect the terminal, and vice versa.
     private func startApiChannel() {
@@ -276,20 +127,6 @@ public final class TerminalSession: ObservableObject {
             do {
                 let snapshot = try api.snapshot()
                 await MainActor.run { self?.sidebar.apply(snapshot) }
-                // Safe to ask for the layout here: this runs from attach(), after
-                // the handshake, and the server sets effective_size to the declared
-                // size the moment the app connection registers. Before that the
-                // rects would be computed against an 80x24 fallback.
-                do {
-                    let layout = try api.paneLayout()
-                    await MainActor.run { self?.applyLayout(layout) }
-                } catch {
-                    // Not fatal — layout_updated will still arrive on the next
-                    // change — but it must not be silent: without a layout the
-                    // grid stays on the whole-frame fallback, and a swallowed
-                    // error here looks exactly like a rendering bug.
-                    await MainActor.run { self?.log("pane.layout failed: \(error)") }
-                }
                 let pump = try api.subscribe()
                 await MainActor.run { self?.eventPump = pump }
                 pump.start(
@@ -299,7 +136,7 @@ public final class TerminalSession: ObservableObject {
                         // fresh, unshared dictionary — safe to hand to the main
                         // actor. The box carries it across the boundary.
                         let box = EventBox(name: name, data: data)
-                        Task { @MainActor in self?.handle(event: box.name, data: box.data) }
+                        Task { @MainActor in self?.sidebar.handle(event: box.name, data: box.data) }
                     },
                     onFailure: { error in
                         Task { @MainActor in self?.log("event pump stopped: \(error)") }
@@ -399,16 +236,17 @@ public final class TerminalSession: ObservableObject {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    /// Sends an already-encoded payload. Input failures are logged rather than
+    /// surfaced: a dropped keypress must not tear down the session.
     /// Sends one input intent.
     ///
-    /// Still `InputEvents` on the app render connection — this refactor moved
-    /// the plumbing, not the destination, so not a byte on the wire changed.
-    /// Once panes have their own connections this splits three ways
-    /// (`pane.send_keys`, `pane.send_text`, raw CSI bytes), which is why the
-    /// view now reports intent instead of encoding here.
+    /// Encoded here as `InputEvents` on the app render connection. Once panes get
+    /// their own connections this splits three ways — `pane.send_keys`,
+    /// `pane.send_text`, and raw CSI bytes for the six keys herdr's API cannot
+    /// name — which is why the view reports intent rather than finished bytes.
     ///
-    /// Failures are logged rather than surfaced: a dropped keypress must not
-    /// tear down the session.
+    /// Failures are logged rather than surfaced: a dropped keypress must not tear
+    /// down the session.
     private func send(_ input: TerminalInput) {
         guard let connection else { return }
         do {
@@ -431,7 +269,7 @@ public final class TerminalSession: ObservableObject {
     /// sidebar stays hidden throughout (see `RuntimePaths.configContents`).
     public func setTheme(_ newTheme: Theme) {
         theme = newTheme
-        applyThemeToAllViews(newTheme)
+        view.applyTheme(newTheme)
         Task.detached { [paths] in
             try? paths.writeConfig(themeName: newTheme.configName)
         }
@@ -442,7 +280,7 @@ public final class TerminalSession: ObservableObject {
     /// re-laying out the whole session dozens of times per drag.
     public func resize(to size: CGSize) {
         guard case .running = state else { return }
-        let grid = font.gridSize(for: size)
+        let grid = view.gridSize(for: size)
         if let last = lastReportedGrid, last == grid { return }
 
         resizeDebounce?.cancel()
@@ -455,11 +293,8 @@ public final class TerminalSession: ObservableObject {
 
     private func sendResize(_ grid: (columns: UInt16, rows: UInt16)) {
         guard let connection else { return }
-        // Diagnostic: a resize makes the server recompute the layout, so if these
-        // are frequent they are the driver behind any layout churn.
-        log("resize -> \(grid.columns)x\(grid.rows)")
         lastReportedGrid = grid
-        let cell = font.cellSize
+        let cell = view.cellSize
         try? connection.send(
             WireEncoder.resize(
                 columns: grid.columns,
@@ -473,11 +308,7 @@ public final class TerminalSession: ObservableObject {
     /// Returns keyboard focus to the terminal. The sidebar's SwiftUI controls
     /// take first responder when clicked and never hand it back.
     public func focusTerminal() {
-        // With one view per pane, focus goes to the focused pane's view. The
-        // whole-grid view is the fallback, which is also what is on screen while
-        // a crossing modal is up.
-        let target = router.focusedPaneId.flatMap { paneViews[$0] } ?? wholeGridView
-        target.window?.makeFirstResponder(target)
+        view.window?.makeFirstResponder(view)
     }
 
     public func shutdown() {

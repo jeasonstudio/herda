@@ -141,12 +141,6 @@ public final class ApiClient: @unchecked Sendable {
         )
     }
 
-    /// Measured: `result`'s keys are `["layout", "type"]`, so the snapshot sits one
-    /// level down and this goes through the envelope rather than decoding `result`.
-    public func paneLayout() throws -> PaneLayoutSnapshot {
-        try request(PaneLayoutEnvelope.self, method: "pane.layout", id: "pane-layout").layout
-    }
-
     public func splitPane(_ paneId: String, direction: SplitDirection) throws {
         _ = try request(
             method: "pane.split",
@@ -192,14 +186,6 @@ public final class ApiClient: @unchecked Sendable {
             method: "pane.send_text",
             params: ["pane_id": paneId, "text": text],
             id: "send-text"
-        )
-    }
-
-    public func setSplitRatio(_ splitId: String, ratio: Double) throws {
-        _ = try request(
-            method: "layout.set_split_ratio",
-            params: ["split_id": splitId, "ratio": ratio],
-            id: "set-split-ratio"
         )
     }
 

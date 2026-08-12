@@ -31,9 +31,12 @@ struct ContentView: View {
             )
             .frame(width: 224)
 
-            // 卡片已经下沉到每个 pane 上(见 PaneGridView),这里不能再套一层 ——
-            // 否则整片卡片网格外面还会有一圈描边。
             terminalArea
+                .cardSurface(
+                    fill: session.theme.chrome.panelBackground,
+                    over: session.theme.chrome.windowBackground,
+                    theme: session.theme
+                )
                 .padding(.leading, ChromeMetrics.cardGap)
                 .padding(.top, ChromeMetrics.contentTopInset)
                 .padding(.trailing, ChromeMetrics.cardInset)
@@ -50,23 +53,30 @@ struct ContentView: View {
     }
 
     private var terminalArea: some View {
-        ZStack {
-            // 网格尺寸的上报与圆角内缩都移进了 PaneGridView:卡片下沉到每个 pane
-            // 之后,「内容内缩多少才不被圆角切」是按 pane 算的,不再是整块一次。
-            PaneGridView(session: session, theme: session.theme)
-                .onReceive(
-                    NotificationCenter.default.publisher(
-                        for: NSWindow.didBecomeKeyNotification
-                    )
-                ) { _ in session.reportFocus(gained: true) }
-                .onReceive(
-                    NotificationCenter.default.publisher(
-                        for: NSWindow.didResignKeyNotification
-                    )
-                ) { _ in session.reportFocus(gained: false) }
+        GeometryReader { geometry in
+            ZStack {
+                GridViewRepresentable(view: session.view)
+                    .onAppear { session.start(viewportSize: geometry.size) }
+                    .onChange(of: geometry.size) { _, size in session.resize(to: size) }
+                    .onReceive(
+                        NotificationCenter.default.publisher(
+                            for: NSWindow.didBecomeKeyNotification
+                        )
+                    ) { _ in session.reportFocus(gained: true) }
+                    .onReceive(
+                        NotificationCenter.default.publisher(
+                            for: NSWindow.didResignKeyNotification
+                        )
+                    ) { _ in session.reportFocus(gained: false) }
 
-            overlay
+                overlay
+            }
         }
+        // 窗口边距由 body 给,这里只让网格退出卡片的圆角:内缩超过
+        // r(1 - 1/√2) 后任何单元格都不会被圆角切到,所以不必对
+        // TerminalGridView 做 layer 裁剪。GeometryReader 拿到的是内缩后
+        // 的尺寸,session.resize 因此仍收到正确的网格大小。
+        .padding(ChromeMetrics.gridInset)
     }
 
     /// What is drawn over the grid while there is nothing to draw in it.
@@ -136,3 +146,9 @@ struct ContentView: View {
     }
 }
 
+private struct GridViewRepresentable: NSViewRepresentable {
+    let view: TerminalGridView
+
+    func makeNSView(context: Context) -> TerminalGridView { view }
+    func updateNSView(_ nsView: TerminalGridView, context: Context) {}
+}

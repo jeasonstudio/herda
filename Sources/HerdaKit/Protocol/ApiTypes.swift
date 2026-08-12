@@ -126,6 +126,14 @@ public struct PaneInfoEnvelope: Decodable, Sendable {
     public let pane: PaneInfo
 }
 
+/// Which way `pane.split` divides. Serialized snake_case by herdr
+/// (`api/schema/common.rs:55`), so the raw values are the wire values — not
+/// "vertical"/"horizontal", which is the mistake this spelling exists to avoid.
+public enum SplitDirection: String, Codable, Sendable {
+    case right
+    case down
+}
+
 public enum ApiTypes {
     public enum LineKind: Equatable, Sendable {
         case response(id: String)
