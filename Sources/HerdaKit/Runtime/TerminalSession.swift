@@ -117,8 +117,8 @@ public final class TerminalSession: ObservableObject {
     private func attach(_ connection: ClientProtocolConn) {
         self.connection = connection
         state = .running
-        wholeGridView.onPayload = { [weak self] payload in
-            Task { @MainActor in self?.send(payload) }
+        wholeGridView.onInput = { [weak self] input in
+            Task { @MainActor in self?.send(input) }
         }
         log("handshake ok, read loop starting")
         connection.startReadLoop(
@@ -172,8 +172,8 @@ public final class TerminalSession: ObservableObject {
         if let existing = paneViews[paneId] { return existing }
         let view = TerminalGridView(terminalFont: font)
         view.applyTheme(theme)
-        view.onPayload = { [weak self] payload in
-            Task { @MainActor in self?.send(payload) }
+        view.onInput = { [weak self] input in
+            Task { @MainActor in self?.send(input) }
         }
         paneViews[paneId] = view
         return view
@@ -399,12 +399,20 @@ public final class TerminalSession: ObservableObject {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    /// Sends an already-encoded payload. Input failures are logged rather than
-    /// surfaced: a dropped keypress must not tear down the session.
-    private func send(_ payload: [UInt8]) {
+    /// Sends one input intent.
+    ///
+    /// Still `InputEvents` on the app render connection — this refactor moved
+    /// the plumbing, not the destination, so not a byte on the wire changed.
+    /// Once panes have their own connections this splits three ways
+    /// (`pane.send_keys`, `pane.send_text`, raw CSI bytes), which is why the
+    /// view now reports intent instead of encoding here.
+    ///
+    /// Failures are logged rather than surfaced: a dropped keypress must not
+    /// tear down the session.
+    private func send(_ input: TerminalInput) {
         guard let connection else { return }
         do {
-            try connection.send(payload)
+            try connection.send(input.appInputEventsPayload())
         } catch {
             log("input send failed: \(error)")
         }
@@ -412,7 +420,7 @@ public final class TerminalSession: ObservableObject {
 
     public func reportFocus(gained: Bool) {
         guard case .running = state else { return }
-        send(WireEncoder.focus(gained: gained))
+        send(.focus(gained: gained))
     }
 
     /// Switches the active theme: applied to this client's own terminal/sidebar

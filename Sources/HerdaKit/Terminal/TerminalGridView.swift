@@ -83,8 +83,13 @@ public final class TerminalGridView: NSView {
         needsDisplay = true
     }
 
-    /// Set by the session; receives encoded payloads ready for the socket.
-    public var onPayload: (@Sendable ([UInt8]) -> Void)?
+    /// Set by the session; receives what the user did, not encoded bytes.
+    ///
+    /// The session decides which pane the input belongs to and which channel can
+    /// carry it. Emitting finished `InputEvents` bytes here would make that
+    /// undecidable, and those bytes are unsendable on a per-pane connection —
+    /// see `TerminalInput`.
+    public var onInput: (@Sendable (TerminalInput) -> Void)?
 
     /// Row 0 must be at the top, matching the row-major cell order.
     public override var isFlipped: Bool { true }
@@ -167,7 +172,7 @@ public final class TerminalGridView: NSView {
            event.charactersIgnoringModifiers?.lowercased() == "v"
         {
             if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
-                onPayload?(WireEncoder.paste(text))
+                onInput?(.text(text, kind: .paste))
             }
             return
         }
@@ -179,7 +184,7 @@ public final class TerminalGridView: NSView {
             composing: hasMarkedText()
         ) {
         case .send(let key, let modifiers):
-            onPayload?(WireEncoder.key(key, modifiers: modifiers))
+            onInput?(.key(key, modifiers))
         case .inputMethod:
             // Produces insertText, setMarkedText, or doCommand(by:). An input
             // method has three ways to answer, and all three have to be handled
@@ -195,7 +200,7 @@ public final class TerminalGridView: NSView {
                 composing: false
             )
             if case .send(let key, let modifiers) = fallback {
-                onPayload?(WireEncoder.key(key, modifiers: modifiers))
+                onInput?(.key(key, modifiers))
             }
         case .ignore:
             break
@@ -209,7 +214,7 @@ public final class TerminalGridView: NSView {
     public override func doCommand(by selector: Selector) {
         guard let key = KeyMap.key(forCommand: selector) else { return }
         commandSentAKey = true
-        onPayload?(WireEncoder.key(key, modifiers: []))
+        onInput?(.key(key, []))
     }
 
     // MARK: - Mouse
@@ -228,12 +233,12 @@ public final class TerminalGridView: NSView {
     private func sendMouse(_ kind: WireEncoder.MouseKind, _ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let position = cellPosition(for: point)
-        onPayload?(
-            WireEncoder.mouse(
+        onInput?(
+            .mouse(
                 kind,
                 column: position.column,
                 row: position.row,
-                modifiers: KeyMap.modifiers(from: event.modifierFlags)
+                KeyMap.modifiers(from: event.modifierFlags)
             )
         )
     }
@@ -812,7 +817,7 @@ extension TerminalGridView: @MainActor NSTextInputClient {
         markedSelection = NSRange(location: 0, length: 0)
         needsDisplay = true
         guard !text.isEmpty else { return }
-        onPayload?(WireEncoder.textCommit(text))
+        onInput?(.text(text, kind: .commit))
     }
 
     /// Composition in progress: hold the provisional text for drawing.

@@ -14,7 +14,10 @@ final class TerminalGridInputTests: XCTestCase {
     private func makeView() -> (TerminalGridView, () -> [[UInt8]]) {
         let view = TerminalGridView(terminalFont: TerminalFont(size: 13))
         let sent = Sent()
-        view.onPayload = { payload in sent.append(payload) }
+        // Collected as the bytes the intent encodes to, so every byte assertion
+        // below still checks what actually reaches the wire — and still proves
+        // each emit site in the view fires.
+        view.onInput = { input in sent.append(input.appInputEventsPayload()) }
         return (view, { sent.all })
     }
 
