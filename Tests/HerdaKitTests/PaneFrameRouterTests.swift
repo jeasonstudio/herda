@@ -30,6 +30,48 @@ final class PaneFrameRouterTests: XCTestCase {
         splits: []
     )
 
+    func testAdoptsTheLayoutForTheActiveTab() {
+        XCTAssertTrue(PaneFrameRouter.belongsToCurrentView(twoPanes, activeTabId: "w1:t1"))
+    }
+
+    func testRejectsALayoutForAnotherTab() {
+        // layout_updated is emitted per (workspace, tab), including for tabs that
+        // are not showing. Observed live: one workspace interleaved a 2-pane and a
+        // 3-pane layout many times a second, each with its own rects and its own
+        // stale area, which made the view thrash and desynchronised the rects from
+        // the frame badly enough that GapProbe saw pane content in a gap column.
+        XCTAssertFalse(PaneFrameRouter.belongsToCurrentView(twoPanes, activeTabId: "w1:t2"))
+    }
+
+    func testAdoptsAnyLayoutBeforeTheActiveTabIsKnown() {
+        // Early in startup the session snapshot has not landed yet, so there is no
+        // active tab to compare against. Rejecting everything then would leave the
+        // grid on its fallback indefinitely.
+        XCTAssertTrue(PaneFrameRouter.belongsToCurrentView(twoPanes, activeTabId: nil))
+    }
+
+    func testApplyingAnIdenticalSnapshotReportsNoChange() {
+        // Observed against a live server: herdr re-emits layout_updated roughly
+        // every 100ms even when nothing about the layout changed. Re-slicing every
+        // frame for an unchanged layout is pure waste, and republishing the state
+        // redraws the whole card grid with it.
+        var router = PaneFrameRouter()
+        XCTAssertTrue(router.apply(twoPanes), "the first application is a change")
+        XCTAssertFalse(router.apply(twoPanes), "an identical snapshot is not")
+    }
+
+    func testApplyingAChangedSnapshotReportsChange() {
+        var router = PaneFrameRouter()
+        XCTAssertTrue(router.apply(twoPanes))
+
+        let zoomed = PaneLayoutSnapshot(
+            workspaceId: twoPanes.workspaceId, tabId: twoPanes.tabId, zoomed: true,
+            area: twoPanes.area, focusedPaneId: twoPanes.focusedPaneId,
+            panes: twoPanes.panes, splits: twoPanes.splits
+        )
+        XCTAssertTrue(router.apply(zoomed), "zoom flipping is a change")
+    }
+
     func testRoutesOneSliceToEachPane() {
         var router = PaneFrameRouter()
         router.apply(twoPanes)

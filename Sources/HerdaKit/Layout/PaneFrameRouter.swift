@@ -11,8 +11,44 @@ public struct PaneFrameRouter: Sendable {
 
     public init() {}
 
-    public mutating func apply(_ snapshot: PaneLayoutSnapshot) {
+    /// Whether a layout event describes what is currently on screen.
+    ///
+    /// `layout_updated` is emitted per (workspace, tab), and the server emits for
+    /// tabs that are not showing. Adopting every event paints another tab's layout
+    /// onto the current terminal area: observed on a live server as one workspace
+    /// interleaving a 2-pane and a 3-pane layout many times a second, each with
+    /// its own rects. That thrashing also desynchronised the rects from the frame,
+    /// which made `GapProbe` see pane content sitting in a gap column and pinned
+    /// the view to its whole-grid fallback.
+    ///
+    /// The tab id is what is compared, because nothing coarser works. Comparing
+    /// workspaces lets a second tab of the same workspace through. Checking that
+    /// the layout contains the focused pane also lets it through, since the focused
+    /// pane lives in exactly one of the tabs and the other tab's events keep
+    /// arriving on their own. Both were tried against a live server and both still
+    /// thrashed.
+    ///
+    /// A nil tab means the session snapshot has not landed yet; accept anything
+    /// then, or startup would sit on the fallback indefinitely.
+    public static func belongsToCurrentView(
+        _ snapshot: PaneLayoutSnapshot,
+        activeTabId: String?
+    ) -> Bool {
+        guard let activeTabId else { return true }
+        return snapshot.tabId == activeTabId
+    }
+
+    /// Adopts a snapshot. Returns false when it is identical to the current one.
+    ///
+    /// Observed against a live server: herdr re-emits `layout_updated` roughly
+    /// every 100ms even when nothing about the layout changed. Acting on each one
+    /// would re-slice every frame and republish the state — redrawing the entire
+    /// card grid — for no result, so callers use the return value to skip that.
+    @discardableResult
+    public mutating func apply(_ snapshot: PaneLayoutSnapshot) -> Bool {
+        guard snapshot != self.snapshot else { return false }
         self.snapshot = snapshot
+        return true
     }
 
     public var focusedPaneId: String? { snapshot?.focusedPaneId }
