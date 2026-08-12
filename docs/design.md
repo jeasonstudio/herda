@@ -54,7 +54,8 @@ herdr 是一个终端 agent 运行时：后台 server 持有一批 PTY，coding 
 | 布局语义 | **server 排版 + 原生外壳** | herdr sidebar 设 `Hidden`，App 模式拿整块终端区 grid。split/zoom/焦点/prefix key 全部免费且与 TUI 行为一致，布局子系统工作量为零 |
 | 协议编解码 | 纯 Swift 手写 bincode | 单一 Xcode 工程，无 Rust 构建步骤。探针已证明约 100 行足够。自带 runtime 使版本 pin 在一起，手写的主要风险（漂移）已消除 |
 | 渲染技术 | Core Text + AppKit `NSView` | 按行合并相同属性的 cell 成 run 绘制，背景色单独填矩形（iTerm2 / Alacritty CPU 模式的标准思路）。Metal 对原型是过度工程 |
-| 窗口 chrome | **双卡片浮起 + theme 实色** | 侧栏与终端各是一张大圆角卡片，浮在 `windowBackground` 上，间距取代 hairline。表面不用 Liquid Glass：终端正文要长时间阅读，半透明会让对比度随桌面壁纸浮动，且 18 个实色主题会降格成一层 tint。形态全部自绘，不依赖 macOS 26 API |
+| 窗口 chrome | **只有终端浮起 + theme 实色** | sidebar 与窗口底同层同色、贴左边缘、铺满高度；只有终端是一张圆角卡片浮在这一面上。先做过双卡片（两者各一张卡片），实际观感把窗口切得太碎，退回单卡片。表面不用 Liquid Glass：终端正文要长时间阅读，半透明会让对比度随桌面壁纸浮动，且 18 个实色主题会降格成一层 tint。形态全部自绘，不依赖 macOS 26 API |
+| 分隔线 / 描边取色 | **相对所在的那个面派生**（`hairline(on:)`） | 不能一律用 `panelBackground` 派生的那条:`windowBackground` 也从它派生、往同一方向（黑）走，两者会收敛。实测亮色主题下差只有 0–6，`kanagawa-lotus` 为 0——卡片描边与 sidebar 分隔线都会消失。间距用 8pt 网格（HIG）|
 | deployment target | macOS 26 | 不是技术必需 —— 实测把它降到 14.0 代码照样编译（`ConcentricRectangle` 被否掉后没有 26-only API 了）。保留它是因为这是自用原型、不分发，低 target 只会引入"在旧系统上没测过"的不确定性；且以后要用 macOS 26 的新 API 时不必包 `#available` |
 | 完成度 | demo 级 | 见 §1 |
 | 仓库位置 | `herda/`，独立 git | 该目录位于 herdr 工作副本内，但**不进 herdr 的 git 历史**。herdr 侧通过本地 `.git/info/exclude` 忽略，不修改仓库内的 `.gitignore` |
@@ -256,13 +257,18 @@ M1 + M2 + M3 合起来构成"最小日常可用闭环"。M1 不过关则后两�
 
 ### M4 — macOS 26 窗口 chrome
 
-侧栏与终端改为两张浮在 `windowBackground` 上的大圆角卡片，间距取代 hairline；行圆角由 `ChromeMetrics.rowRadius`（卡片圆角减行内缩）推导。deployment target 提到 macOS 26。表面保留 theme 实色，不用 Liquid Glass。
+sidebar 与窗口底同层同色、贴左边缘、铺满高度；只有终端是一张圆角卡片浮在这一面上。间距（8pt 网格）取代原来 sidebar 与终端之间那条 hairline。deployment target 提到 macOS 26。表面保留 theme 实色，不用 Liquid Glass。
 
-顺带修掉一个既有缺陷：卡片顶边的净空原先是 28pt，沿用 macOS 15 的 titlebar 高度，而 macOS 26 的拖动带实测 32pt——终端顶部 4pt 的点击一直被吞成拖窗口。
+中途做过双卡片（sidebar 与终端各一张），观感把窗口切得太碎，退回单卡片——见 `plan-m4.md` 的「后续修订」。
 
-验收：两卡片圆角与阴影可见 · 终端顶部点击不触发窗口拖动（由拖动带高度的实测断言保证，不靠 GUI 点击） · 18 个主题在真实绘制下卡片均可辨，`terminal` 主题面色差为零、由描边托起
+顺带修掉两个既有缺陷：
 
-设计见 `superpowers/specs/2026-08-11-macos26-chrome-design.md`，实现见 `plan-m4.md`。
+- 卡片顶边的净空原先是 28pt，沿用 macOS 15 的 titlebar 高度，而 macOS 26 的拖动带实测 **32pt**——终端顶部 4pt 的点击一直被吞成拖窗口。
+- 分隔线与卡片描边原先一律取 `hairline`（相对 `panelBackground` 派生），而它与 `windowBackground` 在亮色主题下收敛到差 0–6——描边与 sidebar 分隔线在那些主题下看不见。改为相对所在面派生。
+
+验收：终端卡片圆角、阴影、描边可见 · 终端顶部点击不触发窗口拖动（由拖动带高度的实测断言保证，不靠 GUI 点击） · 18 个主题在真实绘制下描边独立可辨，`terminal` 主题面色差为零、由描边托起
+
+设计见 `superpowers/specs/2026-08-11-macos26-chrome-design.md`（该文记录的是双卡片方案，顶部有修订说明），实现见 `plan-m4.md`。
 
 ## 8. 错误处理
 
