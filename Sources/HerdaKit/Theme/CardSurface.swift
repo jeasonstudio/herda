@@ -20,16 +20,25 @@ public struct CardSurface: ViewModifier {
     /// 这张卡片浮在哪个面上。
     let over: ThemeColor
     let theme: Theme
+    /// 圆角。pane 卡片取比窗口级卡片小一号的值,见 `ChromeMetrics.paneCardRadius`
+    /// —— 那里的取值受「圆角不能切到终端内容」约束,不是审美选择。
+    let radius: CGFloat
 
-    public init(fill: ThemeColor, over: ThemeColor, theme: Theme) {
+    public init(
+        fill: ThemeColor,
+        over: ThemeColor,
+        theme: Theme,
+        radius: CGFloat = ChromeMetrics.cardRadius
+    ) {
         self.fill = fill
         self.over = over
         self.theme = theme
+        self.radius = radius
     }
 
     public func body(content: Content) -> some View {
         let shape = RoundedRectangle(
-            cornerRadius: ChromeMetrics.cardRadius,
+            cornerRadius: radius,
             style: .continuous
         )
         return content
@@ -50,8 +59,9 @@ extension View {
     public func cardSurface(
         fill: ThemeColor,
         over: ThemeColor,
-        theme: Theme
+        theme: Theme,
+        radius: CGFloat = ChromeMetrics.cardRadius
     ) -> some View {
-        modifier(CardSurface(fill: fill, over: over, theme: theme))
+        modifier(CardSurface(fill: fill, over: over, theme: theme, radius: radius))
     }
 }
