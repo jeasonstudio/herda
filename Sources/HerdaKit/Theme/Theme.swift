@@ -35,11 +35,11 @@ public struct ThemeColor: Hashable, Sendable {
 }
 
 /// The 16 ANSI colors and default foreground/background ghostty renders
-/// herdr's terminal content with. Fixed for every herdr `[theme]` — herdr
-/// never overrides these in the socket-embedding case (see design.md's wire
-/// color unpacking section). Index 0...15 == ANSI 0...15 in the conventional
-/// order: black, red, green, yellow, blue, magenta, cyan, white, then the
-/// bright variant of each.
+/// herdr's terminal content with. Fixed for every herdr `[theme]` — herdr never
+/// overrides these in the socket-embedding case, which is why a theme change
+/// repaints the chrome but leaves terminal content alone. Index 0...15 ==
+/// ANSI 0...15 in the conventional order: black, red, green, yellow, blue,
+/// magenta, cyan, white, then the bright variant of each.
 public struct TerminalPalette: Sendable {
     public let defaultForeground: ThemeColor
     public let defaultBackground: ThemeColor

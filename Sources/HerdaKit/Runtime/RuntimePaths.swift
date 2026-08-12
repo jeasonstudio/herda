@@ -83,9 +83,38 @@ public struct RuntimePaths: Sendable {
         }
     }
 
+    /// herdr's product-announcement store, under `XDG_STATE_HOME`.
+    ///
+    /// `state_dir()` appends "herdr" the same way `config_dir()` does
+    /// (`src/config/io.rs:36`).
+    public var announcementStore: URL {
+        stateHome
+            .appendingPathComponent("herdr", isDirectory: true)
+            .appendingPathComponent("product-announcements.json")
+    }
+
+    /// Writes an empty announcement store, which suppresses herdr's
+    /// product-announcement screen.
+    ///
+    /// It has no config switch: the startup mode decision (`src/app/mod.rs:500`)
+    /// picks `ProductAnnouncement` whenever `load_unseen_for_current_version`
+    /// returns something, and that only consults this file
+    /// (`src/product_announcements.rs:100`). With `store.latest` null it returns
+    /// nothing (`:191`). Left unwritten, a herdr upgrade carrying a new
+    /// announcement takes over the screen on launch and swallows keys before
+    /// they reach any keybinding.
+    public func writeEmptyAnnouncementStore() throws {
+        try FileManager.default.createDirectory(
+            at: announcementStore.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(#"{"latest":null,"seen":[]}"#.utf8).write(to: announcementStore)
+    }
+
     public func writeConfig(themeName: String) throws {
         try createDirectories()
         try configContents(themeName: themeName).write(to: configFile, atomically: true, encoding: .utf8)
+        try writeEmptyAnnouncementStore()
     }
 
     /// Reads the `[theme] name` from a config.toml written by a previous

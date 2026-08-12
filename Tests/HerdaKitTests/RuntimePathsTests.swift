@@ -36,6 +36,9 @@ final class RuntimePathsTests: XCTestCase {
         )
     }
 
+
+
+
     func testConfigContentsDisablesOnboarding() {
         // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
         // overlay, and it takes over input handling before anything else.
@@ -68,6 +71,49 @@ final class RuntimePathsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
         try subject.writeConfig(themeName: "nord")
         XCTAssertEqual(subject.existingThemeName(), "nord")
+    }
+
+    func testAnnouncementStoreLivesUnderHerdrSubdirectoryOfStateHome() {
+        // herdr's state_dir() appends the app directory name to XDG_STATE_HOME,
+        // the same way config_dir() does for XDG_CONFIG_HOME.
+        XCTAssertEqual(
+            paths.announcementStore.path,
+            "/tmp/herda-test/state/herdr/product-announcements.json"
+        )
+    }
+
+    func testWritesAnEmptyAnnouncementStore() throws {
+        // Mode::ProductAnnouncement has no config key and behaves like
+        // Mode::Onboarding — it covers the terminal and swallows keys before
+        // keybindings match, so it would surface the next time herdr ships an
+        // announcement. load_unseen_from_path starts with store.latest?, so a
+        // store whose latest is null suppresses it.
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("herda-announce-\(UUID().uuidString)", isDirectory: true)
+        let subject = RuntimePaths(root: temporaryRoot)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        try subject.writeEmptyAnnouncementStore()
+
+        let data = try Data(contentsOf: subject.announcementStore)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertTrue(object["latest"] is NSNull, "latest must be present and null")
+        XCTAssertEqual((object["seen"] as? [String])?.count, 0)
+    }
+
+    func testWriteConfigAlsoWritesTheAnnouncementStore() throws {
+        // Both have to land before the server is spawned, so they hang off one
+        // call site rather than relying on TerminalSession to remember a second.
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("herda-announce-\(UUID().uuidString)", isDirectory: true)
+        let subject = RuntimePaths(root: temporaryRoot)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        try subject.writeConfig(themeName: "nord")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: subject.announcementStore.path))
     }
 
     func testEnvironmentSetsIsolationVariables() {

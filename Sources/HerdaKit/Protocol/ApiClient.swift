@@ -63,6 +63,14 @@ public final class ApiClient: @unchecked Sendable {
     }
 
     /// Issues one request and returns the raw response line.
+    ///
+    /// Throws on an `error` response. This used to return the line unexamined,
+    /// which meant every caller that ignored the result — focus, split, close,
+    /// zoom, send — treated a rejection as success. It was caught by a live test
+    /// asserting herdr rejects the key name `home`: herdr did reject it, and the
+    /// client reported success anyway. For input that failure is silent and
+    /// load-bearing, since a key wrongly believed to have been delivered never
+    /// reaches its raw-bytes fallback.
     public func request(
         method: String,
         params: [String: Any] = [:],
@@ -71,7 +79,22 @@ public final class ApiClient: @unchecked Sendable {
         let socket = try UnixSocket(connectingTo: socketPath)
         defer { socket.close() }
         try socket.write(Array(try ApiClient.requestLine(id: id, method: method, params: params).utf8))
-        return try LineReader(socket: socket).readLine()
+        let line = try LineReader(socket: socket).readLine()
+        try ApiClient.throwIfError(in: line)
+        return line
+    }
+
+    /// Raises when a response line carries an `error` object.
+    ///
+    /// A line that does not parse as JSON is left alone: the typed decoder path
+    /// reports that more precisely, and the untyped path has callers that only
+    /// want the text back.
+    static func throwIfError(in line: String) throws {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = object["error"]
+        else { return }
+        throw Failure.errorResponse(String(describing: error))
     }
 
     /// Issues a request and decodes `result` into the given type.
@@ -118,6 +141,78 @@ public final class ApiClient: @unchecked Sendable {
         )
     }
 
+    /// Creates a workspace and returns its first pane.
+    ///
+    /// herda has to call this on an empty session: herdr only creates a default
+    /// workspace when a full app client is connected (`headless.rs:3658`), and
+    /// herda has none.
+    public func createWorkspace() throws -> PaneInfo {
+        try request(
+            WorkspaceCreateEnvelope.self,
+            method: "workspace.create",
+            params: ["focus": true],
+            id: "create-workspace"
+        ).rootPane
+    }
+
+    public func splitPane(_ paneId: String, direction: SplitDirection) throws {
+        _ = try request(
+            method: "pane.split",
+            params: ["target_pane_id": paneId, "direction": direction.rawValue, "focus": true],
+            id: "split-pane"
+        )
+    }
+
+    public func zoomPane(_ paneId: String) throws {
+        _ = try request(method: "pane.zoom", params: ["pane_id": paneId], id: "zoom-pane")
+    }
+
+    public func closePane(_ paneId: String) throws {
+        _ = try request(method: "pane.close", params: ["pane_id": paneId], id: "close-pane")
+    }
+
+    /// Whether a pane still exists.
+    ///
+    /// The authoritative answer to "did the pane go away, or did I just lose the
+    /// connection?". Guessing that from a failed reattach does not work: opening a
+    /// connection to a dead terminal succeeds, and the server only rejects it
+    /// afterwards with an asynchronous `ServerShutdown`.
+    public func paneExists(_ paneId: String) -> Bool {
+        (try? request(method: "pane.get", params: ["pane_id": paneId], id: "pane-get")) != nil
+    }
+
+    /// Sends key presses to one pane, by herdr's key names.
+    ///
+    /// The preferred input channel: herdr encodes each name with that
+    /// terminal's own modes (`encode_api_keys` -> `runtime.encode_terminal_key`,
+    /// `app/api_helpers.rs:37`), so application cursor mode and bracketed paste
+    /// — neither observable from a client — stay on the side that knows them.
+    /// Names come from `HerdrKeyName`; the six keys it cannot name go out as raw
+    /// bytes instead, see `TerminalKeyBytes`.
+    ///
+    /// Must be called from a serial queue. herdr's API is one request per
+    /// connection (`api/server.rs:139`), and concurrent connections reach the
+    /// app event queue in any order — see `PaneInputQueue`.
+    public func sendKeys(_ paneId: String, keys: [String]) throws {
+        _ = try request(
+            method: "pane.send_keys",
+            params: ["pane_id": paneId, "keys": keys],
+            id: "send-keys"
+        )
+    }
+
+    /// Sends literal text to one pane. herdr wraps it for bracketed paste when
+    /// the pane has that enabled (`app/api_helpers.rs:25`).
+    ///
+    /// Serial like `sendKeys`, and for the same reason.
+    public func sendText(_ paneId: String, text: String) throws {
+        _ = try request(
+            method: "pane.send_text",
+            params: ["pane_id": paneId, "text": text],
+            id: "send-text"
+        )
+    }
+
     static func subscribeLine(to eventTypes: [String]) throws -> String {
         try requestLine(
             id: "events",
@@ -140,6 +235,11 @@ public final class ApiClient: @unchecked Sendable {
         "pane.focused",
         "pane.exited",
         "pane.agent_detected",
+        // Load-bearing for the native split layout: keyboard split and JSON API
+        // split both go through the server's one mutation dispatcher, so this
+        // event always fires. Without the subscription the UI would sit on a
+        // stale layout after every prefix-key split.
+        "layout.updated",
     ]
 
     /// Opens a subscription and returns the pump driving it. The connection must

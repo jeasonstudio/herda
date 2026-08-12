@@ -1,0 +1,31 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:0.91765,0.92941,0.89020,1.00000",
+      "srgb:0.78824,0.81961,0.75294,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : "automatic",
+          "image-name" : "mark.png",
+          "name" : "Mark"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.25
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

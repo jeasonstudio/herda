@@ -319,14 +319,17 @@ explains why the change is what it is, including the numbers or the failure that
 motivated it; `git log` is the reference for the expected depth. Run the tests
 before committing.
 
-- [`docs/design.md`](docs/design.md) is the design of record: process model,
-  isolation scheme, protocol details, decision record, accepted risks. Two parts
-  of it are known stale — the sidebar is now hidden with
-  `sidebar_start_collapsed` rather than a one-shot keypress, and the §11 claim
-  that per-cell drawing is fast enough was disproved by measurement. Fix them
-  when you next touch that file.
-- `docs/plan-m*.md` are per milestone and each ends with its acceptance results,
-  including the defects acceptance found and their root cause. A new milestone
-  gets a new file in that shape.
+- [`docs/superpowers/specs/`](docs/superpowers/specs) holds one design per
+  change, dated and scoped to what it decided: process model, isolation scheme,
+  protocol details, hard constraints, and the alternatives that were rejected
+  along with the reason.
+- [`docs/superpowers/plans/`](docs/superpowers/plans) holds the implementation
+  plan each spec produced. A plan ends with what acceptance actually found,
+  including the defects it turned up and their root cause.
+- There is no single `design.md` any more. The one that existed accumulated four
+  milestones until parts of it were stale in ways nothing flagged — it still
+  described a keypress for collapsing the sidebar that had been replaced by
+  `sidebar_start_collapsed`, and still claimed per-cell drawing was fast enough
+  after measurement had disproved it. Per-change specs go stale visibly.
 - `CLAUDE.md` is for agents working in this repo. If you establish a new
   constraint, record it there with the reason, not just in the commit message.

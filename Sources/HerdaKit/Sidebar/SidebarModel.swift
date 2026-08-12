@@ -21,6 +21,13 @@ public final class SidebarModel: ObservableObject {
 
     public init() {}
 
+    /// The tab the terminal area is showing, when known. Nil until the session
+    /// snapshot lands.
+    public var activeTabId: String? {
+        guard let focusedWorkspaceId else { return nil }
+        return workspaces.first { $0.workspaceId == focusedWorkspaceId }?.activeTabId
+    }
+
     public func apply(_ snapshot: SessionSnapshot) {
         workspaces = snapshot.workspaces.sorted { $0.number < $1.number }
         panesById = Dictionary(

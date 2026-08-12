@@ -21,18 +21,24 @@ public final class ClientProtocolConn: @unchecked Sendable {
     /// A version mismatch is fatal by design: the bundled binary and this app
     /// are versioned together, so a mismatch means the install is broken
     /// rather than something to negotiate around.
+    /// - Parameter launchMode: `.terminalAttach` for a per-pane connection. It
+    ///   does not attach by itself — it sets the server's
+    ///   `pending_terminal_attach`, without which a following `ControlTerminal`
+    ///   is rejected (`headless.rs:2672`).
     public func handshake(
         columns: UInt16,
         rows: UInt16,
         cellWidth: UInt32,
-        cellHeight: UInt32
+        cellHeight: UInt32,
+        launchMode: WireEncoder.LaunchMode = .app
     ) throws {
         try send(
             WireEncoder.hello(
                 columns: columns,
                 rows: rows,
                 cellWidth: cellWidth,
-                cellHeight: cellHeight
+                cellHeight: cellHeight,
+                launchMode: launchMode
             )
         )
 

@@ -42,6 +42,14 @@ public struct WorkspaceInfo: Decodable, Identifiable, Sendable {
     public let paneCount: Int
     public let tabCount: Int
     public let agentStatus: AgentStatus
+    /// The tab currently showing for this workspace. Optional because the field is
+    /// not required on the wire.
+    ///
+    /// Load-bearing for the native split layout: `layout_updated` is emitted per
+    /// (workspace, tab) including for tabs that are not showing, and this is the
+    /// only way to tell which one the terminal area is actually displaying. See
+    /// `PaneFrameRouter.belongsToCurrentView`.
+    public let activeTabId: String?
 
     public var id: String { workspaceId }
 }
@@ -59,8 +67,28 @@ public struct PaneInfo: Decodable, Identifiable, Sendable {
     /// Absent on panes that are not running a recognised agent.
     public let agent: String?
     public let terminalTitleStripped: String?
+    /// Scroll position, absent when the server does not report one. The native
+    /// scrollbar reads it from here instead of subscribing per pane — see
+    /// `ScrollbarGeometry` for why.
+    public let scroll: PaneScrollInfo?
 
     public var id: String { paneId }
+}
+
+/// A pane's scrollback position, as carried on `PaneInfo`.
+public struct PaneScrollInfo: Decodable, Equatable, Sendable {
+    /// Rows away from the bottom. 0 means pinned to the newest output.
+    public let offsetFromBottom: Int
+    /// How many further rows are reachable above the current view. 0 means the
+    /// content has not exceeded one screen.
+    public let maxOffsetFromBottom: Int
+    public let viewportRows: Int
+
+    public init(offsetFromBottom: Int, maxOffsetFromBottom: Int, viewportRows: Int) {
+        self.offsetFromBottom = offsetFromBottom
+        self.maxOffsetFromBottom = maxOffsetFromBottom
+        self.viewportRows = viewportRows
+    }
 }
 
 public struct SessionSnapshot: Decodable, Sendable {
@@ -88,6 +116,33 @@ public struct SessionSnapshot: Decodable, Sendable {
 
 public struct SessionSnapshotEnvelope: Decodable, Sendable {
     public let snapshot: SessionSnapshot
+}
+
+/// `pane.split` and `pane.get` answer `{"pane": {...}, "type": "pane_info"}`, so
+/// the pane sits one level below `result` — `handle_pane_split` ends with
+/// `encode_success(id, ResponseResult::PaneInfo { pane })`
+/// (`app/api/panes.rs:125`).
+public struct PaneInfoEnvelope: Decodable, Sendable {
+    public let pane: PaneInfo
+}
+
+/// `workspace.create` answers `{"root_pane": {...}, "tab": {...}, ...}`.
+///
+/// Needed because herdr does not bootstrap a session for a client like this one:
+/// `ensure_default_workspace` runs only when `latest_app_client` is present
+/// (`headless.rs:3658`), and every herda connection is an attach connection. With
+/// no app client there is no default workspace and no first pane, so herda has to
+/// ask for one.
+public struct WorkspaceCreateEnvelope: Decodable, Sendable {
+    public let rootPane: PaneInfo
+}
+
+/// Which way `pane.split` divides. Serialized snake_case by herdr
+/// (`api/schema/common.rs:55`), so the raw values are the wire values — not
+/// "vertical"/"horizontal", which is the mistake this spelling exists to avoid.
+public enum SplitDirection: String, Codable, Sendable {
+    case right
+    case down
 }
 
 public enum ApiTypes {

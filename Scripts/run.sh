@@ -32,6 +32,19 @@ launch() {
   # running, and the relaunched app reconnects to the same one, so a rebuild
   # does not disturb the agents. Verified by the server keeping its pid across a
   # restart.
+  #
+  # The trade-off: SIGKILL never sends Detach, so the server only learns the old
+  # client is gone when it notices the closed socket. Across many relaunches it
+  # accumulates render targets, and each one carries the terminal size that
+  # instance declared. The server's terminal_area is then overwritten by whichever
+  # target rendered last, which recomputes the layout and emits layout_updated
+  # every time — measured at ~10 events/second with a stale target, versus one
+  # event on a fresh server.
+  #
+  # Harmless for the agents, but it looks exactly like a layout bug: pane rects
+  # drift, the reported area flips between the sizes different builds declared,
+  # and the pane count changes. If layout churn appears while iterating, relaunch
+  # with --reset before believing it.
   pkill -9 -f "$EXECUTABLE" 2>/dev/null || true
 
   # Executed directly rather than through `open`, which proved unreliable across
@@ -51,12 +64,32 @@ launch() {
 reset_session() {
   # Only the process holding this exact socket, so a herdr session of the user's
   # own is never a candidate.
+  local server=""
   if [ -S "$RUNTIME/herdr.sock" ]; then
-    local server
     server=$(lsof -t "$RUNTIME/herdr.sock" 2>/dev/null || true)
     [ -n "$server" ] && kill "$server" 2>/dev/null || true
   fi
   pkill -9 -f "$EXECUTABLE" 2>/dev/null || true
+
+  # Wait for the server to actually exit before deleting anything. It saves the
+  # session on its way down, and that write used to land after the rm -rf and
+  # recreate config/herdr/session.json — so the next server restored the very
+  # state this was meant to discard. Caught with a "fresh" session that came up
+  # with three panes numbered p1/p4/p2 and next_public_pane_number already at 6,
+  # remembering a pane created minutes earlier.
+  if [ -n "$server" ]; then
+    local waited=0
+    while kill -0 "$server" 2>/dev/null; do
+      if [ "$waited" -ge 50 ]; then
+        kill -9 "$server" 2>/dev/null || true
+        sleep 0.2
+        break
+      fi
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+  fi
+
   rm -rf "$RUNTIME"
   echo "discarded the embedded server's session"
 }

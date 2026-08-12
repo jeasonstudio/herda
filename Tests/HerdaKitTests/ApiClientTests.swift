@@ -114,4 +114,110 @@ final class ApiClientTests: XCTestCase {
             lock.lock(); storage.append(name); lock.unlock()
         }
     }
+
+    // MARK: Layout surface
+
+    func testPaneLayoutRequestLine() throws {
+        let line = try ApiClient.requestLine(id: "layout", method: "pane.layout", params: [:])
+        XCTAssertTrue(line.contains("\"method\":\"pane.layout\""))
+        XCTAssertTrue(line.hasSuffix("\n"))
+    }
+
+    func testSplitPaneRequestCarriesDirectionAndTargetPane() throws {
+        let line = try ApiClient.requestLine(
+            id: "split",
+            method: "pane.split",
+            params: ["target_pane_id": "w1:p1", "direction": "right", "focus": true]
+        )
+        XCTAssertTrue(line.contains("\"method\":\"pane.split\""))
+        XCTAssertTrue(line.contains("\"direction\":\"right\""))
+        XCTAssertTrue(line.contains("\"target_pane_id\":\"w1:p1\""))
+    }
+
+    func testSetSplitRatioRequestLine() throws {
+        let line = try ApiClient.requestLine(
+            id: "ratio",
+            method: "layout.set_split_ratio",
+            params: ["split_id": "s0", "ratio": 0.42]
+        )
+        XCTAssertTrue(line.contains("\"method\":\"layout.set_split_ratio\""))
+        XCTAssertTrue(line.contains("\"split_id\":\"s0\""))
+    }
+
+    func testLayoutEventTypeIsSubscribed() throws {
+        // Load-bearing: keyboard split and JSON API split both go through the same
+        // dispatcher on the server, so the event always fires — but without this
+        // subscription the UI would sit on a stale layout after every prefix-key
+        // split.
+        XCTAssertTrue(ApiClient.sidebarEventTypes.contains("layout.updated"))
+        let line = try ApiClient.subscribeLine(to: ApiClient.sidebarEventTypes)
+        XCTAssertTrue(line.contains("layout.updated"))
+    }
+
+    func testEncodesSendKeysAsAKeyNameList() throws {
+        let line = try ApiClient.requestLine(
+            id: "k",
+            method: "pane.send_keys",
+            params: ["pane_id": "w1:p2", "keys": ["ctrl+c"]]
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(object["method"] as? String, "pane.send_keys")
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        XCTAssertEqual(params["pane_id"] as? String, "w1:p2")
+        XCTAssertEqual(params["keys"] as? [String], ["ctrl+c"])
+    }
+
+    func testEncodesSendTextWithTheLiteralPayload() throws {
+        // Text goes as text, not as a key list: herdr wraps it for bracketed
+        // paste when the pane has it enabled (app/api_helpers.rs:25), which a
+        // client cannot know.
+        let line = try ApiClient.requestLine(
+            id: "t",
+            method: "pane.send_text",
+            params: ["pane_id": "w1:p2", "text": "héllo 世界"]
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        )
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        XCTAssertEqual(params["text"] as? String, "héllo 世界")
+    }
+
+    func testAnErrorResponseRaises() throws {
+        // Regression: the untyped request path returned the line unexamined, so
+        // every caller that ignored the result — focus, split, close, zoom, send
+        // — read a rejection as success. Caught live by herdr rejecting the key
+        // name "home" while the client reported success.
+        XCTAssertThrowsError(
+            try ApiClient.throwIfError(
+                in: #"{"error":{"code":"invalid_key","message":"unsupported key home"},"id":"r"}"#
+            )
+        )
+    }
+
+    func testASuccessResponseDoesNotRaise() throws {
+        XCTAssertNoThrow(
+            try ApiClient.throwIfError(in: #"{"id":"r","result":{"type":"ok"}}"#)
+        )
+    }
+
+    func testANonJSONLineIsLeftAlone() throws {
+        // The typed decoder reports a malformed body more precisely, and the
+        // untyped path has callers that only want the text back.
+        XCTAssertNoThrow(try ApiClient.throwIfError(in: "not json at all"))
+    }
+
+    func testRequestLineIsASingleLineEvenWithNewlinesInText() throws {
+        // The API is newline-delimited, so an embedded newline in a paste has to
+        // be escaped by the JSON encoder rather than splitting the request into
+        // two — the second of which would fail to parse.
+        let line = try ApiClient.requestLine(
+            id: "t",
+            method: "pane.send_text",
+            params: ["pane_id": "w1:p2", "text": "a\nb"]
+        )
+        XCTAssertEqual(line.filter { $0 == "\n" }.count, 1, "only the terminator")
+    }
 }

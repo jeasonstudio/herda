@@ -42,6 +42,20 @@ then `~/.local/bin/herdr`, in that order.
   metrics, glyph resolution, block geometry, key mapping, composition layout.
 - `Sources/HerdaKit/Theme/`, `Sidebar/` — palettes and sidebar state.
 - `Sources/Herda/` — SwiftUI app, window, sidebar view.
+- `Resources/Herda.icon/` — the app icon, an Icon Composer bundle. macOS 26 clips
+  every icon to a squircle and pads anything that is not already one, so the
+  legacy `.appiconset` route is not an option here. `Scripts/make-icon.sh`
+  rasterises `Resources/herda-mark.svg` into the one layer asset and records why
+  it sits where it does; the ground is a gradient in `icon.json`, not in the PNG.
+  The group sets `specular: false`, which is not cosmetic hedging — the default
+  bevel puts a wet-plastic rim on every edge of the mark and washes the mark's
+  own colour several steps lighter. Shadow is at 0.25 rather than the default 0.5
+  for the same reason: at 0.5 it smudges roughly 20px into the ground.
+
+  Beware when measuring any of this: `NSWorkspace.icon(forFile:)` caches by
+  path, so rebuilding in place and re-rendering returns the *old* icon, byte for
+  byte. Copy the built app to a fresh path per variant, and check that
+  `Assets.car` actually changed hash before believing a comparison.
 
 ## Principles
 
@@ -173,13 +187,20 @@ Propose the commit message and get alignment before committing.
 
 ## Docs
 
-`docs/design.md` is the design of record: the process model, the isolation scheme,
-the protocol details and the accepted non-goals. `docs/plan-m*.md` are per
-milestone and end with the acceptance results, including defects found during
-acceptance and their root cause.
+`docs/superpowers/specs/` holds one design per change, dated and named for the
+topic; `docs/superpowers/plans/` holds the implementation plan each spec produced.
+A spec is the design of record for its area — process model, protocol details,
+hard constraints, accepted non-goals — and a plan ends with what acceptance
+actually found.
 
-`design.md` records what a decision replaced and why, not just the current
-answer — the one-shot keypress that could not hold the sidebar collapsed, and the
-per-cell drawing that measurement disproved, are both still written down next to
-what took over. Keep that when editing it: the rejected alternative is usually
-the part worth knowing.
+There is no single `design.md`. There was, and it accumulated four milestones of
+decisions until parts of it were stale in ways nothing flagged: it still described
+a one-shot keypress for collapsing the sidebar, and still claimed per-cell drawing
+was fast enough after measurement had disproved it. Per-change specs go stale
+visibly instead, because each one is dated and scoped to what it decided.
+
+**Record what a decision replaced and why, not just the current answer.** The
+rejected alternative is usually the part worth knowing, and this repo has the
+scars to prove it: the native-split spec keeps its own first design — cell-grid
+slicing with a blank-gap heuristic — next to the one that replaced it, because
+every problem that design had followed from its premise rather than from a bug.

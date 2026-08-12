@@ -20,6 +20,95 @@ final class WireEncoderTests: XCTestCase {
         )
     }
 
+    func testHelloCanDeclareTerminalAttach() {
+        // Only the launch mode differs. That one byte is what makes the server
+        // set pending_terminal_attach (client_transport.rs:566) and keeps the
+        // connection out of is_full_app_client (clients.rs:176), so it never
+        // becomes foreground and never drives effective_size.
+        let app = WireEncoder.hello(columns: 100, rows: 30, cellWidth: 8, cellHeight: 16)
+        let attach = WireEncoder.hello(
+            columns: 100, rows: 30, cellWidth: 8, cellHeight: 16,
+            launchMode: .terminalAttach
+        )
+        XCTAssertEqual(Array(app.dropLast()), Array(attach.dropLast()))
+        XCTAssertEqual(app.last, 0x00)
+        XCTAssertEqual(attach.last, 0x01)
+    }
+
+    func testControlTerminalMatchesGoldenBytes() {
+        XCTAssertEqual(
+            WireEncoder.controlTerminal(target: "w1:p1", takeover: true),
+            [
+                0x09,                                      // ClientMessage::ControlTerminal
+                0x05, 0x77, 0x31, 0x3A, 0x70, 0x31,        // String "w1:p1"
+                0x01,                                      // takeover true
+            ]
+        )
+    }
+
+    func testControlTerminalTakeoverFalseAndWideTarget() {
+        // String is a varint length plus UTF-8, so a multi-byte target is longer
+        // in bytes than in characters — the distinction that makes `char` and
+        // `String` diverge above ASCII.
+        let payload = WireEncoder.controlTerminal(target: "wé", takeover: false)
+        XCTAssertEqual(payload, [0x09, 0x03, 0x77, 0xC3, 0xA9, 0x00])
+    }
+
+    func testInputCarriesRawBytesLengthPrefixed() {
+        // ESC [ H — Home, which herdr's API vocabulary cannot name.
+        XCTAssertEqual(
+            WireEncoder.input([0x1B, 0x5B, 0x48]),
+            [0x01, 0x03, 0x1B, 0x5B, 0x48]
+        )
+    }
+
+    func testAttachScrollWheelMatchesGoldenBytes() {
+        XCTAssertEqual(
+            WireEncoder.attachScroll(
+                direction: .up, lines: 3, column: 12, row: 7, modifiers: [.option]
+            ),
+            [
+                0x06,        // ClientMessage::AttachScroll
+                0x00,        // AttachScrollSource::Wheel
+                0x00,        // AttachScrollDirection::Up
+                0x03,        // lines
+                0x01, 0x0C,  // column Some(12)
+                0x01, 0x07,  // row Some(7)
+                0x04,        // modifiers, raw u8
+            ]
+        )
+    }
+
+    func testAttachScrollOmitsAbsentCoordinates() {
+        XCTAssertEqual(
+            WireEncoder.attachScroll(
+                direction: .down, lines: 1, column: nil, row: nil, modifiers: []
+            ),
+            [0x06, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00]
+        )
+    }
+
+    func testAttachScrollCarriesPageKeyBytes() {
+        // PageUp travels this way rather than as an Input, because the server
+        // decides per pane whether the page key moves host scrollback or goes to
+        // the child application.
+        XCTAssertEqual(
+            WireEncoder.attachScroll(
+                direction: .up, lines: 1, column: nil, row: nil, modifiers: [],
+                pageKeyInput: [0x1B, 0x5B, 0x35, 0x7E]
+            ),
+            [
+                0x06,                                // AttachScroll
+                0x01,                                // AttachScrollSource::PageKey
+                0x04, 0x1B, 0x5B, 0x35, 0x7E,        // input bytes, length prefixed
+                0x00,                                // direction Up
+                0x01,                                // lines
+                0x00, 0x00,                          // column None, row None
+                0x00,                                // modifiers
+            ]
+        )
+    }
+
     func testHelloWidensLargeDimensionsWithVarintTag() {
         let payload = WireEncoder.hello(columns: 300, rows: 30, cellWidth: 8, cellHeight: 16)
         // 300 does not fit in one byte: tag 251 then u16 little endian.

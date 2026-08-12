@@ -37,6 +37,15 @@ public final class TerminalGridView: NSView {
     private var verticalScroll: ScrollAccumulator
     private var horizontalScroll: ScrollAccumulator
 
+    /// The current text selection, or nil when there is none.
+    ///
+    /// herdr's own mouse selection went away with the app render connection, so
+    /// this is the only way to copy from a pane. Cleared by typing, because a
+    /// highlight left over a line that has since scrolled means nothing.
+    private var selection: TerminalSelection?
+    /// True while the mouse is down and extending the selection.
+    private var isSelecting = false
+
     /// Provisional input-method text, drawn at the cursor until committed.
     var markedText: String = ""
     /// Clause the input method currently has selected inside `markedText`.
@@ -75,9 +84,7 @@ public final class TerminalGridView: NSView {
     }
 
     public func gridSize(for size: CGSize) -> (columns: UInt16, rows: UInt16) {
-        let columns = max(1, Int(size.width / cellSize.width))
-        let rows = max(1, Int(size.height / cellSize.height))
-        return (UInt16(min(columns, Int(UInt16.max))), UInt16(min(rows, Int(UInt16.max))))
+        terminalFont.gridSize(for: size)
     }
 
     public func update(_ frame: GridFrame) {
@@ -85,8 +92,13 @@ public final class TerminalGridView: NSView {
         needsDisplay = true
     }
 
-    /// Set by the session; receives encoded payloads ready for the socket.
-    public var onPayload: (@Sendable ([UInt8]) -> Void)?
+    /// Set by the session; receives what the user did, not encoded bytes.
+    ///
+    /// The session decides which pane the input belongs to and which channel can
+    /// carry it. Emitting finished `InputEvents` bytes here would make that
+    /// undecidable, and those bytes are unsendable on a per-pane connection —
+    /// see `TerminalInput`.
+    public var onInput: (@Sendable (TerminalInput) -> Void)?
 
     /// Row 0 must be at the top, matching the row-major cell order.
     public override var isFlipped: Bool { true }
@@ -164,15 +176,7 @@ public final class TerminalGridView: NSView {
     // MARK: - Keyboard
 
     public override func keyDown(with event: NSEvent) {
-        // cmd+v is handled locally: the pane cannot read the host pasteboard.
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "v"
-        {
-            if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
-                onPayload?(WireEncoder.paste(text))
-            }
-            return
-        }
+        clearSelection()
 
         switch KeyMap.decide(
             keyCode: event.keyCode,
@@ -181,7 +185,7 @@ public final class TerminalGridView: NSView {
             composing: hasMarkedText()
         ) {
         case .send(let key, let modifiers):
-            onPayload?(WireEncoder.key(key, modifiers: modifiers))
+            onInput?(.key(key, modifiers))
         case .inputMethod:
             // Produces insertText, setMarkedText, or doCommand(by:). An input
             // method has three ways to answer, and all three have to be handled
@@ -197,7 +201,7 @@ public final class TerminalGridView: NSView {
                 composing: false
             )
             if case .send(let key, let modifiers) = fallback {
-                onPayload?(WireEncoder.key(key, modifiers: modifiers))
+                onInput?(.key(key, modifiers))
             }
         case .ignore:
             break
@@ -211,7 +215,7 @@ public final class TerminalGridView: NSView {
     public override func doCommand(by selector: Selector) {
         guard let key = KeyMap.key(forCommand: selector) else { return }
         commandSentAKey = true
-        onPayload?(WireEncoder.key(key, modifiers: []))
+        onInput?(.key(key, []))
     }
 
     // MARK: - Mouse
@@ -230,12 +234,12 @@ public final class TerminalGridView: NSView {
     private func sendMouse(_ kind: WireEncoder.MouseKind, _ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let position = cellPosition(for: point)
-        onPayload?(
-            WireEncoder.mouse(
+        onInput?(
+            .mouse(
                 kind,
                 column: position.column,
                 row: position.row,
-                modifiers: KeyMap.modifiers(from: event.modifierFlags)
+                KeyMap.modifiers(from: event.modifierFlags)
             )
         )
     }
@@ -245,13 +249,93 @@ public final class TerminalGridView: NSView {
         // and nothing gives it back — typing would go nowhere until the window
         // was re-focused.
         if !isFirstResponder { window?.makeFirstResponder(self) }
+        // Still reported so the session can focus this pane. The router drops the
+        // button itself, because forwarding it would need the terminal's mouse
+        // mode, which an attached connection cannot observe.
         sendMouse(.down(.left), event)
+
+        guard let frame = currentFrame else { return }
+        let cell = selectionCell(for: event)
+        switch event.clickCount {
+        case 2:
+            selection = TerminalSelection.word(at: cell, in: frame)
+            isSelecting = false
+        case 3:
+            selection = TerminalSelection.line(at: cell, in: frame)
+            isSelecting = false
+        default:
+            // Anchored but empty until the drag moves: a plain click has to clear
+            // the previous selection without making a new one-cell selection that
+            // would put a single character on the pasteboard.
+            selection = TerminalSelection(anchor: cell, focus: cell)
+            isSelecting = true
+        }
+        needsDisplay = true
     }
 
-    public override func mouseUp(with event: NSEvent) { sendMouse(.up(.left), event) }
-    public override func mouseDragged(with event: NSEvent) { sendMouse(.drag(.left), event) }
+    public override func mouseDragged(with event: NSEvent) {
+        guard isSelecting, let anchor = selection?.anchor else {
+            sendMouse(.drag(.left), event)
+            return
+        }
+        selection = TerminalSelection(anchor: anchor, focus: selectionCell(for: event))
+        needsDisplay = true
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        if isSelecting {
+            isSelecting = false
+            // A click that never moved leaves an empty selection; drop it so the
+            // highlight and the copy command both treat it as nothing.
+            if selection?.isEmpty == true { selection = nil; needsDisplay = true }
+            return
+        }
+        sendMouse(.up(.left), event)
+    }
+
     public override func rightMouseDown(with event: NSEvent) { sendMouse(.down(.right), event) }
     public override func rightMouseUp(with event: NSEvent) { sendMouse(.up(.right), event) }
+
+    /// The cell a selection end sits at.
+    ///
+    /// Unlike `cellPosition(for:)` this is not clamped to `UInt16` and is allowed
+    /// to run past the last column and row: a drag continues outside the view, and
+    /// clamping the ends would make the selection stop following the pointer.
+    /// `TerminalSelection` clamps when it reads the frame.
+    private func selectionCell(for event: NSEvent) -> TerminalSelection.Cell {
+        let point = convert(event.locationInWindow, from: nil)
+        return TerminalSelection.Cell(
+            column: Int((point.x / cellSize.width).rounded()),
+            row: Int((point.y / cellSize.height).rounded(.down))
+        )
+    }
+
+    /// Pastes the host pasteboard into the pane. The pane cannot read it itself.
+    public func paste() {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            return
+        }
+        onInput?(.text(text, kind: .paste))
+    }
+
+    /// The selected text, or nil when there is no selection.
+    public var selectedText: String? {
+        guard let selection, !selection.isEmpty, let frame = currentFrame else { return nil }
+        let text = selection.text(from: frame)
+        return text.isEmpty ? nil : text
+    }
+
+    public func selectAll() {
+        guard let frame = currentFrame else { return }
+        selection = TerminalSelection.all(in: frame)
+        needsDisplay = true
+    }
+
+    public func clearSelection() {
+        guard selection != nil else { return }
+        selection = nil
+        needsDisplay = true
+    }
 
     public override func scrollWheel(with event: NSEvent) {
         let precise = event.hasPreciseScrollingDeltas
@@ -285,6 +369,7 @@ public final class TerminalGridView: NSView {
         // then anything that annotates a glyph, then the cursor.
         fill(plan.backgrounds, in: context)
         fill(plan.geometry, in: context)
+        drawSelection(plan.selection, in: context)
         drawGlyphs(plan, in: context)
         context.setShouldAntialias(false)
         fill(plan.decorations, in: context)
@@ -298,6 +383,45 @@ public final class TerminalGridView: NSView {
         drawComposition(in: context, backingScale: scale)
     }
 
+    /// Selected cells, merged into one rect per run.
+    ///
+    /// Merged rather than per cell for the same reason backgrounds are: a run of
+    /// 150 separate rects with the same colour draws visible seams where their
+    /// edges meet on a fractional pixel boundary.
+    private func collectSelection(_ grid: GridFrame, into plan: inout RenderPlan) {
+        guard let selection, !selection.isEmpty else { return }
+        let width = Int(grid.width)
+        for row in 0 ..< Int(grid.height) {
+            var runStart: Int?
+            for column in 0 ... width {
+                let selected = column < width && selection.contains(column: column, row: row)
+                if selected, runStart == nil { runStart = column }
+                guard !selected, let start = runStart else { continue }
+                plan.selection.append(CGRect(
+                    x: CGFloat(start) * cellSize.width,
+                    y: CGFloat(row) * cellSize.height,
+                    width: CGFloat(column - start) * cellSize.width,
+                    height: cellSize.height
+                ))
+                runStart = nil
+            }
+        }
+    }
+
+    /// Painted as a translucent wash over the cell rather than an inversion, so
+    /// the text underneath keeps its own colours — a terminal line is rarely one
+    /// colour, and inverting it loses the syntax highlighting people are selecting
+    /// in order to read.
+    private func drawSelection(_ rects: [CGRect], in context: CGContext) {
+        guard !rects.isEmpty else { return }
+        context.setFillColor(
+            NSColor.selectedTextBackgroundColor
+                .withAlphaComponent(isTerminalFocused ? 0.45 : 0.25)
+                .cgColor
+        )
+        context.fill(rects)
+    }
+
     private func fill(_ groups: [Ink: [CGRect]], in context: CGContext) {
         for (ink, rects) in groups {
             context.setFillColor(ink.cgColor)
@@ -309,6 +433,7 @@ public final class TerminalGridView: NSView {
     private func collect(_ grid: GridFrame, into plan: inout RenderPlan, backingScale: CGFloat) {
         let width = Int(grid.width)
         let height = Int(grid.height)
+        collectSelection(grid, into: &plan)
         let cursor = grid.cursor.flatMap { $0.isVisible ? $0 : nil }
         let presentation = cursor.map { CursorPresentation.resolve(shape: $0.shape, focused: isTerminalFocused) }
         // Only a block cursor inverts the cell; the others sit on top of it, so
@@ -735,6 +860,9 @@ private struct RenderPlan {
     /// background colour, and dictionary iteration order is arbitrary — merged
     /// into one bucket, the background would sometimes paint over the shade.
     var backgrounds: [Ink: [CGRect]] = [:]
+    /// Selected cells. Its own pass, drawn after backgrounds and block geometry
+    /// but before glyphs, so the highlight sits over the cell and under the text.
+    var selection: [CGRect] = []
     var geometry: [Ink: [CGRect]] = [:]
     var batches: [BatchKey: Batch] = [:]
     var placed: [Placed] = []
@@ -814,7 +942,7 @@ extension TerminalGridView: @MainActor NSTextInputClient {
         markedSelection = NSRange(location: 0, length: 0)
         needsDisplay = true
         guard !text.isEmpty else { return }
-        onPayload?(WireEncoder.textCommit(text))
+        onInput?(.text(text, kind: .commit))
     }
 
     /// Composition in progress: hold the provisional text for drawing.
