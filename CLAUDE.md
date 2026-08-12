@@ -42,6 +42,20 @@ then `~/.local/bin/herdr`, in that order.
   metrics, glyph resolution, block geometry, key mapping, composition layout.
 - `Sources/HerdaKit/Theme/`, `Sidebar/` — palettes and sidebar state.
 - `Sources/Herda/` — SwiftUI app, window, sidebar view.
+- `Resources/Herda.icon/` — the app icon, an Icon Composer bundle. macOS 26 clips
+  every icon to a squircle and pads anything that is not already one, so the
+  legacy `.appiconset` route is not an option here. `Scripts/make-icon.sh`
+  rasterises `Resources/herda-mark.svg` into the one layer asset and records why
+  it sits where it does; the ground is a gradient in `icon.json`, not in the PNG.
+  The group sets `specular: false`, which is not cosmetic hedging — the default
+  bevel puts a wet-plastic rim on every edge of the mark and washes the mark's
+  own colour several steps lighter. Shadow is at 0.25 rather than the default 0.5
+  for the same reason: at 0.5 it smudges roughly 20px into the ground.
+
+  Beware when measuring any of this: `NSWorkspace.icon(forFile:)` caches by
+  path, so rebuilding in place and re-rendering returns the *old* icon, byte for
+  byte. Copy the built app to a fresh path per variant, and check that
+  `Assets.car` actually changed hash before believing a comparison.
 
 ## Principles
 
