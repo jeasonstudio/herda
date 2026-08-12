@@ -32,7 +32,11 @@ struct ContentView: View {
             .frame(width: 224)
 
             terminalArea
-                .cardSurface(fill: session.theme.chrome.panelBackground, theme: session.theme)
+                .cardSurface(
+                    fill: session.theme.chrome.panelBackground,
+                    over: session.theme.chrome.windowBackground,
+                    theme: session.theme
+                )
                 .padding(.leading, ChromeMetrics.cardGap)
                 .padding(.top, ChromeMetrics.contentTopInset)
                 .padding(.trailing, ChromeMetrics.cardInset)
@@ -113,25 +117,26 @@ struct ContentView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: 256)
             }
             .frame(maxWidth: 520, alignment: .leading)
         }
     }
 
+    /// 覆盖在终端上的提示卡片。走同一个 `CardSurface`,所以圆角、阴影、描边
+    /// 与终端卡片同一套 —— 之前它自带一份 10pt 圆角和硬编码阴影,和窗口其余
+    /// 部分不是一个体系。`over` 是 `panelBackground`:它浮在终端卡片上,不是
+    /// 浮在窗口底上,描边要相对终端卡片派生。
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(.horizontal, 22)
-            .padding(.vertical, 18)
-            .background(
-                session.theme.chrome.sidebarBackground.color,
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            // 24 / 16 / 32 都在 8pt 网格上(原来是 22 / 18 / 32)。
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .cardSurface(
+                fill: session.theme.chrome.sidebarBackground,
+                over: session.theme.chrome.panelBackground,
+                theme: session.theme
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(session.theme.chrome.hairline.color, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.25), radius: 20, y: 6)
             .padding(32)
     }
 

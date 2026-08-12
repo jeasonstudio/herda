@@ -39,7 +39,11 @@ final class CardSurfaceTests: XCTestCase {
                 theme.chrome.windowBackground.color
                 Color.clear
                     .frame(width: 60, height: 60)
-                    .cardSurface(fill: theme.chrome.panelBackground, theme: theme)
+                    .cardSurface(
+                        fill: theme.chrome.panelBackground,
+                        over: theme.chrome.windowBackground,
+                        theme: theme
+                    )
             }
             .frame(width: 160, height: 160)
 
@@ -68,7 +72,11 @@ final class CardSurfaceTests: XCTestCase {
             theme.chrome.windowBackground.color
             Color.clear
                 .frame(width: 60, height: 60)
-                .cardSurface(fill: theme.chrome.panelBackground, theme: theme)
+                .cardSurface(
+                    fill: theme.chrome.panelBackground,
+                    over: theme.chrome.windowBackground,
+                    theme: theme
+                )
         }
         .frame(width: 160, height: 160)
 
