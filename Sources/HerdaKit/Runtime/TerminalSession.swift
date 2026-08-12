@@ -237,7 +237,7 @@ public final class TerminalSession: ObservableObject {
                 Task { @MainActor in self?.handle(input, from: paneId) }
             }
             connection.onEnded = { [weak self] endedPaneId in
-                self?.paneEnded(endedPaneId)
+                self?.connectionDropped(endedPaneId)
             }
             do {
                 try connection.open(
@@ -260,8 +260,27 @@ public final class TerminalSession: ObservableObject {
         resizeAll()
     }
 
-    private func paneEnded(_ paneId: String) {
-        log("pane \(paneId) ended")
+    /// A connection ended. The pane is **not** assumed to be gone.
+    ///
+    /// The two are different events and conflating them was a real bug: a
+    /// connection also ends when another client takes the terminal's single
+    /// writable slot (`terminal_attach_owners` with `takeover`), and treating that
+    /// as a dead pane deleted a card whose process was still running, after which
+    /// nothing resized its PTY and it sat at herdr's default 80x24.
+    ///
+    /// Pane lifecycle is the API's to report — `pane_closed` and `pane_exited`.
+    /// This only reopens. If the pane really is gone the reopen fails, logs, and
+    /// stops; the event then removes it from the tree.
+    private func connectionDropped(_ paneId: String) {
+        guard connections.removeValue(forKey: paneId) != nil else { return }
+        log("connection to \(paneId) dropped; reattaching")
+        reconcile()
+    }
+
+    /// The pane itself is gone, per herdr.
+    private func paneRemoved(_ paneId: String) {
+        log("pane \(paneId) removed")
+        connections[paneId]?.close()
         connections.removeValue(forKey: paneId)
         tree.close(paneId: paneId)
         if tree.root == nil {
@@ -438,7 +457,7 @@ public final class TerminalSession: ObservableObject {
         switch name {
         case "pane_closed", "pane_exited":
             if let paneId = data["pane_id"] as? String, tree.paneIds.contains(paneId) {
-                paneEnded(paneId)
+                paneRemoved(paneId)
             }
         case "pane_created":
             adoptIfUnknown(data)
