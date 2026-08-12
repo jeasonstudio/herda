@@ -36,6 +36,29 @@ final class RuntimePathsTests: XCTestCase {
         )
     }
 
+    func testConfigContentsTurnsOffHerdrsPaneChrome() {
+        // Three keys, three different consequences if one is missed:
+        // pane_borders + pane_scrollbars are what make pane.layout's rect equal
+        // the rendered area, and pane_gaps is what leaves the one cell between
+        // panes that the native card gap occupies.
+        let toml = paths.configContents(themeName: "catppuccin")
+        XCTAssertTrue(toml.contains("pane_borders = false"))
+        XCTAssertTrue(toml.contains("pane_scrollbars = false"))
+        XCTAssertTrue(toml.contains("pane_gaps = true"))
+    }
+
+    func testPaneChromeKeysLiveInTheUiSection() throws {
+        // They belong to herdr's UiConfig. Placed after [theme] they would be
+        // parsed as theme keys and silently ignored — the same trap as
+        // onboarding, which the test above this one guards.
+        let toml = paths.configContents(themeName: "catppuccin")
+        let uiIndex = try XCTUnwrap(toml.range(of: "[ui]")).lowerBound
+        let themeIndex = try XCTUnwrap(toml.range(of: "[theme]")).lowerBound
+        let bordersIndex = try XCTUnwrap(toml.range(of: "pane_borders = false")).lowerBound
+        XCTAssertLessThan(uiIndex, bordersIndex)
+        XCTAssertLessThan(bordersIndex, themeIndex)
+    }
+
     func testConfigContentsDisablesOnboarding() {
         // Not cosmetic: Mode::Onboarding covers the terminal with a first-run
         // overlay, and it takes over input handling before anything else.
