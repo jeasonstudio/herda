@@ -185,6 +185,30 @@ final class ApiClientTests: XCTestCase {
         XCTAssertEqual(params["text"] as? String, "héllo 世界")
     }
 
+    func testAnErrorResponseRaises() throws {
+        // Regression: the untyped request path returned the line unexamined, so
+        // every caller that ignored the result — focus, split, close, zoom, send
+        // — read a rejection as success. Caught live by herdr rejecting the key
+        // name "home" while the client reported success.
+        XCTAssertThrowsError(
+            try ApiClient.throwIfError(
+                in: #"{"error":{"code":"invalid_key","message":"unsupported key home"},"id":"r"}"#
+            )
+        )
+    }
+
+    func testASuccessResponseDoesNotRaise() throws {
+        XCTAssertNoThrow(
+            try ApiClient.throwIfError(in: #"{"id":"r","result":{"type":"ok"}}"#)
+        )
+    }
+
+    func testANonJSONLineIsLeftAlone() throws {
+        // The typed decoder reports a malformed body more precisely, and the
+        // untyped path has callers that only want the text back.
+        XCTAssertNoThrow(try ApiClient.throwIfError(in: "not json at all"))
+    }
+
     func testRequestLineIsASingleLineEvenWithNewlinesInText() throws {
         // The API is newline-delimited, so an embedded newline in a paste has to
         // be escaped by the JSON encoder rather than splitting the request into

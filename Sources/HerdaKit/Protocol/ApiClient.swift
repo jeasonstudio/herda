@@ -63,6 +63,14 @@ public final class ApiClient: @unchecked Sendable {
     }
 
     /// Issues one request and returns the raw response line.
+    ///
+    /// Throws on an `error` response. This used to return the line unexamined,
+    /// which meant every caller that ignored the result — focus, split, close,
+    /// zoom, send — treated a rejection as success. It was caught by a live test
+    /// asserting herdr rejects the key name `home`: herdr did reject it, and the
+    /// client reported success anyway. For input that failure is silent and
+    /// load-bearing, since a key wrongly believed to have been delivered never
+    /// reaches its raw-bytes fallback.
     public func request(
         method: String,
         params: [String: Any] = [:],
@@ -71,7 +79,22 @@ public final class ApiClient: @unchecked Sendable {
         let socket = try UnixSocket(connectingTo: socketPath)
         defer { socket.close() }
         try socket.write(Array(try ApiClient.requestLine(id: id, method: method, params: params).utf8))
-        return try LineReader(socket: socket).readLine()
+        let line = try LineReader(socket: socket).readLine()
+        try ApiClient.throwIfError(in: line)
+        return line
+    }
+
+    /// Raises when a response line carries an `error` object.
+    ///
+    /// A line that does not parse as JSON is left alone: the typed decoder path
+    /// reports that more precisely, and the untyped path has callers that only
+    /// want the text back.
+    static func throwIfError(in line: String) throws {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = object["error"]
+        else { return }
+        throw Failure.errorResponse(String(describing: error))
     }
 
     /// Issues a request and decodes `result` into the given type.

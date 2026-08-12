@@ -225,7 +225,9 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 
 1. **attach 连接会收到哪些 `ServerMessage`。** 已知有帧和 `ServerShutdown`（终端消失时 reason 为 `terminal attach ended: ...`，`headless.rs:4125`）。`Notify` / `SetTitle` / `ReloadSoundConfig` 是否也发、`Handshake` 回什么尺寸，要抓一次真实字节。
 2. **zoom 时非焦点 pane 的 PTY 尺寸怎么处理。** 保持原尺寸最简单，但焦点 pane 铺满后要 resize；退出 zoom 再改回去会让子应用重排两次。可能更好的做法是 zoom 期间不动任何 PTY 尺寸，只改渲染。要实测子应用的观感。
-3. **Home / End 的 CSI 形在真实应用里够不够。** 词表洞已实测确认（见已验证事实五），解法已定，但 `ESC[H`/`ESC[F` 对 application cursor mode 下的 vim / less / nano / zsh 行编辑要逐个试过。若某个应用只认 `ESCOH`，需要记下来并考虑是否值得推动 herdr 补词表。
+3. **Home / End 的 CSI 形在真实应用里够不够。** 词表洞已实测确认（已验证事实五），解法已定，但 `ESC[H`/`ESC[F` 对 application cursor mode 下的 vim / less / nano / zsh 行编辑要逐个试过。若某个应用只认 `ESCOH`，记下来并考虑是否值得推动 herdr 补词表。
+
+   **这一项必须等 pane 连接就位（计划三）才能测。** 实测确认 `pane.send_text` **不能承载转义序列**：发 `ESC[H` 后 `pane read` 读回字面的 `^[[H`，因为 `encode_api_text`（`app/api_helpers.rs:25`）在 bracketed paste 开启时把负载包进 `ESC[200~…ESC[201~`，而中和控制序列正是 bracketed paste 的用途。所以这六个键**没有 API 捷径**，只能走原始 `Input`——这条顺带把「图省事用 send_text」的路堵死了。
 4. **串行输入队列在真实连打下的表现。** 单次延迟已实测（硬约束三：p50 0.16ms），但串行队列在按键重复（按住方向键，约 30/秒）和输入法长串提交下要实机确认不掉字、不乱序，以及那个 105ms 离群值在连打中会不会聚集。
 5. **`herdr pane read` 等 CLI 互操作在 attach 锁定下是否照常。** 预期照常（读路径不 resize），但值得一条实测。
 

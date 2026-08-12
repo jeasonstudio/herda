@@ -118,6 +118,14 @@ public struct SessionSnapshotEnvelope: Decodable, Sendable {
     public let snapshot: SessionSnapshot
 }
 
+/// `pane.split` and `pane.get` answer `{"pane": {...}, "type": "pane_info"}`, so
+/// the pane sits one level below `result` — `handle_pane_split` ends with
+/// `encode_success(id, ResponseResult::PaneInfo { pane })`
+/// (`app/api/panes.rs:125`).
+public struct PaneInfoEnvelope: Decodable, Sendable {
+    public let pane: PaneInfo
+}
+
 public enum ApiTypes {
     public enum LineKind: Equatable, Sendable {
         case response(id: String)

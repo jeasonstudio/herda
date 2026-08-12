@@ -1087,27 +1087,34 @@ name in the failure message is wrong in `HerdrKeyName` — fix it there, not in
 the test. If `testTheSixUnnameableKeysAreStillUnnameable` fails, herdr gained
 those names and `TerminalKeyBytes` can be reduced.
 
-- [ ] **Step 5: Verify Home and End against real applications**
+- [x] **Step 5: Find out whether Home and End can be verified yet — they cannot**
 
-This is the one open question the spec leaves for measurement: `ESC[H` / `ESC[F`
-versus the DECCKM forms `ESC OH` / `ESC OF`.
+The intent was to compare `ESC[H` / `ESC[F` against the DECCKM forms
+`ESC OH` / `ESC OF` in real applications. Attempted through `pane.send_text`,
+which was the only channel available at this stage:
 
-In a scratch pane, for each of `vim`, `less /etc/services`, `nano`, and a bare
-`zsh` prompt with a long line, send the bytes and record what happens:
-
-```bash
-R="$HOME/Library/Application Support/app.herda/runtime"
-export HERDR_SOCKET_PATH="$R/herdr.sock" XDG_CONFIG_HOME="$R/config" XDG_STATE_HOME="$R/state"
-P=$(env -u HERDR_CLIENT_SOCKET_PATH herdr pane split --direction down | \
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
-printf 'sending ESC[H to %s\n' "$P"
-env -u HERDR_CLIENT_SOCKET_PATH herdr pane send-text "$P" "$(printf '\033[H')"
-env -u HERDR_CLIENT_SOCKET_PATH herdr pane read "$P" --format text | tail -3
+```
+send-text "echo abc", then ESC[H, then "X"
+pane read  ->  echo abc^[[HX
 ```
 
-Record the result for each application in the plan file under Step 5. If any
-application ignores the CSI form, note it — the fix is six match arms in herdr's
-`parse_key_combo`, which is outside this project.
+**The escape sequence arrives as literal text.** `pane.send_text` goes through
+`encode_api_text` (`app/api_helpers.rs:25`), which wraps the payload in
+`ESC[200~ … ESC[201~` whenever the pane has bracketed paste enabled — and
+neutralising control sequences is exactly what bracketed paste is for.
+
+Two conclusions, both worth having:
+
+1. **`pane.send_text` cannot carry the six keys.** It is paste semantics, not key
+   semantics. This closes off the shortcut of routing them through the API, and
+   confirms the spec's choice of raw `Input` on the pane's own connection.
+2. **Home/End correctness cannot be measured in this plan.** Raw `Input` needs a
+   `ControlTerminal` connection, which arrives in Plan 3. The check moves there,
+   against `vim`, `less`, `nano` and zsh line editing, as the first thing done
+   once a pane connection exists — before anything is built on top of it.
+
+`TerminalKeyBytes` is unchanged by this: its golden bytes are still what the spec
+specifies, and the open question is only whether applications accept that form.
 
 - [ ] **Step 6: Commit**
 
