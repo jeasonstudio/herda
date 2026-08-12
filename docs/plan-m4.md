@@ -889,13 +889,15 @@ InputTranslator is KeyMap) predate this work and are left alone."
 
 ## 发现的既有问题（不在本次范围）
 
-记录但不修：
+当时记录、**现已全部清理**（2026-08-12）：
 
-1. **CLAUDE.md 的构建命令已过时。** 「Build and test」一节写的是 `xcodebuild -project macos-client.xcodeproj -scheme HerdrPrototype`，重命名成 `herda.xcodeproj` / scheme `Herda` 之后没跟上。`Scripts/test.sh` 是对的。同一节的 `Sources/HerdrPrototype/` 与正文多处 `HerdrKit` 也都还是旧名。
-2. **design.md §5 目录树的两处漂移**：`SidebarViewModel` 实际是 `SidebarModel`，`InputTranslator` 实际是 `KeyMap`。
-3. **CLAUDE.md 自述的两处已知过时**（`sidebar_start_collapsed`、§11 的 per-cell 绘制性能结论）依然存在。
+1. ~~**CLAUDE.md 的构建命令已过时**~~ ——「Build and test」一节曾写 `macos-client.xcodeproj` / scheme `HerdrPrototype`。**已由作者自行修正**，现为 `herda.xcodeproj` / `Herda`；正文的 `HerdrKit`、`Sources/HerdrPrototype/` 也都跟上了。
+2. ~~**design.md §5 目录树的两处漂移**~~ ——`SidebarViewModel` 实际是 `SidebarModel`，`InputTranslator` 实际是 `KeyMap`。已改，并顺带补齐了目录树里缺的 `MarkedText` / `CellGeometry` / `GlyphCache` / `TerminalFont` / `AgentEntry` / `PathLabel`，以及组件表与数据流图里的同名引用；`InputTranslatorTests` 一行换成实际存在的 `KeyMapTests` 与 `MarkedTextTests`。
+3. ~~**design.md 的两处已知 stale**~~ ——CLAUDE.md 曾挂着「Fix them when you next touch that file」。均已修：
+   - §4 的启动序列第 7 步（发一次 `ctrl+alt+f20` toggle sidebar）换成 config 的 `sidebar_start_collapsed`。**根因比「不优雅」更硬**：一次性按键压不住，服务端的 workspace 操作会把 sidebar 重新展开。连带作废了当初选这个键位的第三个理由（避开 `Char` 的 bincode 编码），以及「M1 需要 `Key` 编码」这条依赖。
+   - §11 的「不需要合并 run」——原判断来自 M1 的 `seq 1 400000` 滚动不卡，后来的测量推翻了它。现在按 pass 绘制：背景合并成 `BackgroundRun`，字形聚成 batch 交 `CTFontDrawGlyphs`。这条原先还与 §3「按行合并成 run 绘制」自相矛盾，现已一致。
 
-前两条都是重命名的残留，值得单独一个 `docs:` 提交清一遍，与本次改造无关。
+CLAUDE.md 结尾那段「两处已知 stale」随之删去，替换为一条约定：`design.md` 记录被取代的方案而不只是当前答案，编辑时保留它。
 
 ---
 
