@@ -140,6 +140,38 @@ public final class ApiClient: @unchecked Sendable {
         _ = try request(method: "pane.close", params: ["pane_id": paneId], id: "close-pane")
     }
 
+    /// Sends key presses to one pane, by herdr's key names.
+    ///
+    /// The preferred input channel: herdr encodes each name with that
+    /// terminal's own modes (`encode_api_keys` -> `runtime.encode_terminal_key`,
+    /// `app/api_helpers.rs:37`), so application cursor mode and bracketed paste
+    /// — neither observable from a client — stay on the side that knows them.
+    /// Names come from `HerdrKeyName`; the six keys it cannot name go out as raw
+    /// bytes instead, see `TerminalKeyBytes`.
+    ///
+    /// Must be called from a serial queue. herdr's API is one request per
+    /// connection (`api/server.rs:139`), and concurrent connections reach the
+    /// app event queue in any order — see `PaneInputQueue`.
+    public func sendKeys(_ paneId: String, keys: [String]) throws {
+        _ = try request(
+            method: "pane.send_keys",
+            params: ["pane_id": paneId, "keys": keys],
+            id: "send-keys"
+        )
+    }
+
+    /// Sends literal text to one pane. herdr wraps it for bracketed paste when
+    /// the pane has that enabled (`app/api_helpers.rs:25`).
+    ///
+    /// Serial like `sendKeys`, and for the same reason.
+    public func sendText(_ paneId: String, text: String) throws {
+        _ = try request(
+            method: "pane.send_text",
+            params: ["pane_id": paneId, "text": text],
+            id: "send-text"
+        )
+    }
+
     public func setSplitRatio(_ splitId: String, ratio: Double) throws {
         _ = try request(
             method: "layout.set_split_ratio",

@@ -153,4 +153,47 @@ final class ApiClientTests: XCTestCase {
         let line = try ApiClient.subscribeLine(to: ApiClient.sidebarEventTypes)
         XCTAssertTrue(line.contains("layout.updated"))
     }
+
+    func testEncodesSendKeysAsAKeyNameList() throws {
+        let line = try ApiClient.requestLine(
+            id: "k",
+            method: "pane.send_keys",
+            params: ["pane_id": "w1:p2", "keys": ["ctrl+c"]]
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(object["method"] as? String, "pane.send_keys")
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        XCTAssertEqual(params["pane_id"] as? String, "w1:p2")
+        XCTAssertEqual(params["keys"] as? [String], ["ctrl+c"])
+    }
+
+    func testEncodesSendTextWithTheLiteralPayload() throws {
+        // Text goes as text, not as a key list: herdr wraps it for bracketed
+        // paste when the pane has it enabled (app/api_helpers.rs:25), which a
+        // client cannot know.
+        let line = try ApiClient.requestLine(
+            id: "t",
+            method: "pane.send_text",
+            params: ["pane_id": "w1:p2", "text": "héllo 世界"]
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        )
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        XCTAssertEqual(params["text"] as? String, "héllo 世界")
+    }
+
+    func testRequestLineIsASingleLineEvenWithNewlinesInText() throws {
+        // The API is newline-delimited, so an embedded newline in a paste has to
+        // be escaped by the JSON encoder rather than splitting the request into
+        // two — the second of which would fail to parse.
+        let line = try ApiClient.requestLine(
+            id: "t",
+            method: "pane.send_text",
+            params: ["pane_id": "w1:p2", "text": "a\nb"]
+        )
+        XCTAssertEqual(line.filter { $0 == "\n" }.count, 1, "only the terminator")
+    }
 }
