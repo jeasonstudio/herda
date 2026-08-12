@@ -35,7 +35,9 @@
 **Files:**
 - Create: `Sources/HerdaKit/Layout/LayoutSnapshot.swift`
 - Create: `Tests/HerdaKitTests/LayoutSnapshotTests.swift`
-- Fixture: `Tests/HerdaKitTests/Fixtures/pane-layout-two-panes.json`（计划一 Task 6 Step 2 已抓取）
+- Fixture: `Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json`（计划一已抓取：三 pane、两层 split 的真实响应）
+
+> **实测修正。** 真实响应的 `result` 有一层 `layout` 包装（键是 `["layout", "type"]`），不是 `PaneLayoutSnapshot` 本身。下面的 fixture 测试按 `result.layout` 取，`ApiClient.paneLayout()` 也因此需要 envelope（计划三 Task 2 已同步修正）。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -104,20 +106,52 @@ final class LayoutSnapshotTests: XCTestCase {
     }
 
     func testDecodesRealServerOutput() throws {
-        // 计划一 Task 6 从真实 server 抓的响应。按 CLAUDE.md 的规矩,fixture 来自
-        // 线上字节而不是照 schema 推断的结构。
+        // 计划一从真实 server 抓的响应。按 CLAUDE.md 的规矩,fixture 来自线上字节
+        // 而不是照 schema 推断的结构 —— 正是它揭穿了 `layout` 这层包装。
         let url = try XCTUnwrap(Bundle.module.url(
-            forResource: "pane-layout-two-panes",
+            forResource: "pane-layout-three-panes",
             withExtension: "json"
         ))
-        let envelope = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
-        let result = try XCTUnwrap((envelope as? [String: Any])?["result"])
+        let response = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+        let result = try XCTUnwrap((response as? [String: Any])?["result"] as? [String: Any])
+        // 这一层是实测发现的:result 的键是 ["layout", "type"]。
+        let layout = try XCTUnwrap(result["layout"])
         let snapshot = try ApiTypes.decoder.decode(
             PaneLayoutSnapshot.self,
-            from: try JSONSerialization.data(withJSONObject: result)
+            from: try JSONSerialization.data(withJSONObject: layout)
         )
-        XCTAssertFalse(snapshot.panes.isEmpty)
+
+        XCTAssertEqual(snapshot.panes.count, 3)
         XCTAssertEqual(snapshot.panes.filter(\.focused).count, 1, "恰好一个焦点 pane")
+        XCTAssertEqual(snapshot.area, PaneLayoutRect(x: 0, y: 0, width: 114, height: 40))
+        XCTAssertFalse(snapshot.zoomed)
+
+        // 两层嵌套 split。外层 rect 是整个 area,内层只覆盖左边两个 pane ——
+        // 这个包含关系是 SplitHandles 匹配 split id 时的关键(见计划四)。
+        XCTAssertEqual(snapshot.splits.count, 2)
+        let byId = Dictionary(uniqueKeysWithValues: snapshot.splits.map { ($0.id, $0) })
+        XCTAssertEqual(byId["split_0_root"]?.rect.width, 114)
+        XCTAssertEqual(byId["split_1_0"]?.rect.width, 69)
+    }
+
+    func testRealServerOutputHasOneCellGapsBetweenAllNeighbours() throws {
+        // 实测值:p1 占 0..33、p3 占 35..67、p2 占 69..113,间隙在第 34 与 68 列。
+        let url = try XCTUnwrap(Bundle.module.url(
+            forResource: "pane-layout-three-panes",
+            withExtension: "json"
+        ))
+        let response = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+        let result = try XCTUnwrap((response as? [String: Any])?["result"] as? [String: Any])
+        let snapshot = try ApiTypes.decoder.decode(
+            PaneLayoutSnapshot.self,
+            from: try JSONSerialization.data(withJSONObject: try XCTUnwrap(result["layout"]))
+        )
+
+        let ordered = snapshot.panes.sorted { $0.rect.x < $1.rect.x }
+        for (left, right) in zip(ordered, ordered.dropFirst()) {
+            let gap = Int(right.rect.x) - (Int(left.rect.x) + Int(left.rect.width))
+            XCTAssertEqual(gap, 1, "\(left.paneId)|\(right.paneId) 之间必须恰好一格")
+        }
     }
 }
 ```
@@ -223,6 +257,20 @@ public struct PaneLayoutSplit: Decodable, Equatable, Sendable, Identifiable {
 public enum SplitDirection: String, Decodable, Sendable {
     case right
     case down
+}
+
+/// `pane.layout` 的响应外壳。
+///
+/// 实测发现 `result` 的键是 `["layout", "type"]`,snapshot 在 `layout` 下面 ——
+/// 与 `SessionSnapshotEnvelope` 同一个套路。`layout_updated` 事件的 `data` 也是
+/// 这个形状(schema 的 `EventData::LayoutUpdated { layout }`),所以两条路径可以
+/// 共用它。
+public struct PaneLayoutEnvelope: Decodable, Sendable {
+    public let layout: PaneLayoutSnapshot
+
+    public init(layout: PaneLayoutSnapshot) {
+        self.layout = layout
+    }
 }
 ```
 

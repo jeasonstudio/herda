@@ -179,8 +179,10 @@ Expected: `testLayoutEventTypesAreSubscribed` FAIL（其余三个只用现成的
 在 `focusPane`（`:113-119`）之后追加：
 
 ```swift
+    /// 实测:`result` 的键是 `["layout", "type"]`,snapshot 在 `layout` 下面,所以
+    /// 走 envelope 而不是直接解 `result`。
     public func paneLayout() throws -> PaneLayoutSnapshot {
-        try request(PaneLayoutSnapshot.self, method: "pane.layout", id: "pane-layout")
+        try request(PaneLayoutEnvelope.self, method: "pane.layout", id: "pane-layout").layout
     }
 
     public func splitPane(_ paneId: String, direction: SplitDirection) throws {

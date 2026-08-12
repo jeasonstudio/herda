@@ -446,24 +446,14 @@ h pane layout --current
 
 - [x] **Step 2: 拿 JSON 形式的同一份数据**
 
-```bash
-h pane layout --current --format json 2>/dev/null || h api snapshot | head -50
-```
-
-若 `--format json` 不被支持，改用 API 直接问：
+**实际做法（比原计划简单）：** `herdr pane layout` 本身就输出 JSON，不需要 `--format json`，也不需要经 `nc` 直接打 socket：
 
 ```bash
-printf '{"id":"1","method":"pane.layout","params":{}}\n' | nc -U "$R/herdr.sock"
+mkdir -p Tests/HerdaKitTests/Fixtures
+h pane layout --current > Tests/HerdaKitTests/Fixtures/pane-layout-three-panes.json
 ```
 
-Expected: 一行 JSON，`result` 里有 `panes` 与 `splits`。把它存下来供计划二做 fixture：
-
-```bash
-printf '{"id":"1","method":"pane.layout","params":{}}\n' | nc -U "$R/herdr.sock" \
-  > Tests/HerdaKitTests/Fixtures/pane-layout-two-panes.json
-```
-
-（目录不存在就先 `mkdir -p Tests/HerdaKitTests/Fixtures`。）
+Expected: 一行 JSON。**注意 `result` 的键是 `["layout", "type"]`** —— `panes` 与 `splits` 在 `result.layout` 下面，不在 `result` 下面。这一层包装是本步骤最重要的发现，见文末「实测推翻的假设」。
 
 - [x] **Step 3: 逐格核对左上角与宽度**
 

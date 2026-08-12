@@ -304,6 +304,56 @@ final class SplitHandlesTests: XCTestCase {
         XCTAssertEqual(SplitHandles.ratio(forGridColumn: 0, row: 0, handle: handle), 0.05, accuracy: 0.0001)
         XCTAssertEqual(SplitHandles.ratio(forGridColumn: 79, row: 0, handle: handle), 0.95, accuracy: 0.0001)
     }
+
+    /// 计划一从真实 server 抓到的三 pane 两层布局(fixture
+    /// `pane-layout-three-panes.json` 的内容)。p1 占 0..33、p3 占 35..67、
+    /// p2 占 69..113,缝在第 34 与 68 列。
+    private let threePanes = PaneLayoutSnapshot(
+        workspaceId: "w1", tabId: "w1:t1", zoomed: false,
+        area: PaneLayoutRect(x: 0, y: 0, width: 114, height: 40),
+        focusedPaneId: "w1:p1",
+        panes: [
+            PaneLayoutPane(paneId: "w1:p1", focused: true,
+                           rect: PaneLayoutRect(x: 0, y: 0, width: 34, height: 40)),
+            PaneLayoutPane(paneId: "w1:p3", focused: false,
+                           rect: PaneLayoutRect(x: 35, y: 0, width: 33, height: 40)),
+            PaneLayoutPane(paneId: "w1:p2", focused: false,
+                           rect: PaneLayoutRect(x: 69, y: 0, width: 45, height: 40)),
+        ],
+        splits: [
+            PaneLayoutSplit(id: "split_0_root", direction: .right, ratio: 0.6052632,
+                            rect: PaneLayoutRect(x: 0, y: 0, width: 114, height: 40)),
+            PaneLayoutSplit(id: "split_1_0", direction: .right, ratio: 0.5,
+                            rect: PaneLayoutRect(x: 0, y: 0, width: 69, height: 40)),
+        ]
+    )
+
+    func testNestedSplitsMatchTheCorrectOwner() throws {
+        // 这个 case 是「缝落在哪个 split.rect 内」那条朴素判据的反例,来自实测:
+        // 两个 split 的 rect 都包含第 34 列,而 split_1_0 的 rect(0..68) 也包含
+        // 第 68 列 —— 取首个或取最小都会选错。
+        let handles = SplitHandles.handles(in: threePanes)
+        XCTAssertEqual(handles.count, 2)
+
+        let byGapColumn = Dictionary(
+            uniqueKeysWithValues: handles.map { (Int($0.rect.x), $0) }
+        )
+        XCTAssertEqual(byGapColumn[34]?.splitId, "split_1_0", "内层的缝归内层 split")
+        XCTAssertEqual(byGapColumn[68]?.splitId, "split_0_root", "外层的缝归外层 split")
+    }
+
+    func testHandleCarriesTheOwningSplitsRectForRatioMath() throws {
+        // ratio 的分母必须是那个 split 自己的宽度,不是整个 area 的宽度。
+        let handles = SplitHandles.handles(in: threePanes)
+        let inner = try XCTUnwrap(handles.first { $0.splitId == "split_1_0" })
+        XCTAssertEqual(inner.splitRect.width, 69)
+        // 在内层里拖到第 20 列 → 20/69,而不是 20/114。
+        XCTAssertEqual(
+            SplitHandles.ratio(forGridColumn: 20, row: 0, handle: inner),
+            20.0 / 69.0,
+            accuracy: 0.0001
+        )
+    }
 }
 ```
 
@@ -362,7 +412,10 @@ public enum SplitHandles {
         for left in snapshot.panes {
             for right in snapshot.panes where left.paneId != right.paneId {
                 if let gap = verticalGap(between: left, and: right),
-                   let split = split(containing: gap, direction: .right, in: snapshot),
+                   let split = split(
+                       forGapBetween: left.rect, and: right.rect,
+                       direction: .right, in: snapshot
+                   ),
                    seen.insert(split.id).inserted {
                     found.append(SplitHandle(
                         splitId: split.id, direction: .right,
@@ -370,7 +423,10 @@ public enum SplitHandles {
                     ))
                 }
                 if let gap = horizontalGap(between: left, and: right),
-                   let split = split(containing: gap, direction: .down, in: snapshot),
+                   let split = split(
+                       forGapBetween: left.rect, and: right.rect,
+                       direction: .down, in: snapshot
+                   ),
                    seen.insert(split.id).inserted {
                     found.append(SplitHandle(
                         splitId: split.id, direction: .down,
@@ -447,18 +503,40 @@ public enum SplitHandles {
         return (start: begin, length: end - begin)
     }
 
+    /// 找出负责这条缝的 split。
+    ///
+    /// **不能只看「缝落在哪个 `split.rect` 内」。** 嵌套 split 的 rect 是包含
+    /// 关系,实测的两层是 `split_0_root`(0..113) 与 `split_1_0`(0..68):
+    ///
+    /// - 第 34 列的缝(p1|p3):两个 rect 都包含它,`first {}` 按数组顺序会返回
+    ///   `split_0_root` —— 错。
+    /// - 第 68 列的缝(p3|p2):`split_1_0` 的 rect 是 0..68,**也包含 68**,所以
+    ///   改成「取最小的包含者」同样会选错。
+    ///
+    /// 正确判据是**同时完整包含缝两侧那两个 pane 的最小 split**:第 34 列两侧是
+    /// p1(0..33)/p3(35..67),都在 `split_1_0` 内 → 选它;第 68 列两侧是
+    /// p3(35..67)/p2(69..113),`split_1_0` 不含 p2,只有 `split_0_root` 合格。
     private static func split(
-        containing gap: PaneLayoutRect,
+        forGapBetween left: PaneLayoutRect,
+        and right: PaneLayoutRect,
         direction: SplitDirection,
         in snapshot: PaneLayoutSnapshot
     ) -> PaneLayoutSplit? {
-        snapshot.splits.first { split in
-            guard split.direction == direction else { return false }
-            return Int(gap.x) >= Int(split.rect.x)
-                && Int(gap.x) < Int(split.rect.x) + Int(split.rect.width)
-                && Int(gap.y) >= Int(split.rect.y)
-                && Int(gap.y) < Int(split.rect.y) + Int(split.rect.height)
-        }
+        snapshot.splits
+            .filter { $0.direction == direction }
+            .filter { contains($0.rect, left) && contains($0.rect, right) }
+            .min { area($0.rect) < area($1.rect) }
+    }
+
+    private static func contains(_ outer: PaneLayoutRect, _ inner: PaneLayoutRect) -> Bool {
+        Int(inner.x) >= Int(outer.x)
+            && Int(inner.y) >= Int(outer.y)
+            && Int(inner.x) + Int(inner.width) <= Int(outer.x) + Int(outer.width)
+            && Int(inner.y) + Int(inner.height) <= Int(outer.y) + Int(outer.height)
+    }
+
+    private static func area(_ rect: PaneLayoutRect) -> Int {
+        Int(rect.width) * Int(rect.height)
     }
 }
 ```
@@ -542,6 +620,10 @@ Expected: 全部通过。
                     .onEnded { value in
                         // 拖动过程中不发请求:布局的真相在 herdr,每一帧都往返会
                         // 让拖动变成一串迟到的跳变。松手发一次,事件回来对齐。
+                        //
+                        // `value.location` 已经在整个网格的坐标空间里(gridSpace),
+                        // 不是某个 pane 的局部坐标,所以这里不叠加 pane 偏移 ——
+                        // 零 rect 表达的就是「偏移为零」。
                         let position = LayoutGeometry.gridPosition(
                             forPointInPane: value.location,
                             paneRect: PaneLayoutRect(x: 0, y: 0, width: 0, height: 0),
