@@ -53,27 +53,26 @@ public enum ChromeMetrics {
     /// mask 合成)。
     public static let gridInset: CGFloat = 8
 
-    /// 单个 pane 卡片的圆角。比 `cardRadius` 小一号:pane 卡片是终端区内部的
-    /// 元素,不是浮在窗口上的那一层,层次上该收一档(同 `rowRadius` 的道理)。
+    /// 相邻 pane 卡片之间的间距。
     ///
-    /// 取 6 还有一个硬原因,见 `paneCardOutset`:pane 之间只有 8pt 可分,能给
-    /// 圆角让出的内缩只有 2pt,而圆角 r 需要 0.293r 的内缩才不切到内容 ——
-    /// r = 6 需要 1.76pt,刚好放得下;r = 12 需要 3.5pt,放不下。
-    public static let paneCardRadius: CGFloat = 6
+    /// 就是 `cardGap`,在 8pt 网格上,**和字号无关**。前一版这个值被锁成一个
+    /// 字符格 —— 13pt 下恰好 8pt,但换字号就变 —— 因为那时布局的单位是字符格。
+    /// 现在布局的单位是 point,间距回到它本来该在的地方。
+    public static let paneGap: CGFloat = cardGap
 
-    /// pane 卡片相对 pane 内容区向外扩展的量。
+    /// pane 卡片的圆角。比 `cardRadius` 小一号:pane 卡片是终端区内部的元素,
+    /// 不是浮在窗口上的那一层,层次上该收一档(同 `rowRadius` 的道理)。
     ///
-    /// **不在 8pt 网格上,和阴影同类:它不是布局间距,是为圆角让出的内缩。**
+    /// 前一版取 6 是被迫的:内容必须精确等于 `rect × cellSize`,而能让给圆角的
+    /// 内缩只有 2pt,r = 12 需要 3.5pt 放不下。现在内容尺寸由 `panePadding` 之后
+    /// 剩下的空间决定,圆角不再和间距争同一个 8pt。
+    public static let paneCardRadius: CGFloat = 8
+
+    /// pane 卡片边缘到终端内容的内缩。
     ///
-    /// 几何是这样锁死的:pane 内容必须精确等于 `rect × cellSize`,否则与 PTY 的
-    /// 尺寸不符、最后一列会被裁掉。而 herdr 在 `pane_gaps` 下只在相邻 pane 之间
-    /// 留一格 —— 13pt 下正好 8pt。这 8pt 要同时满足两件事:让圆角不切到角上的
-    /// 字符(需要 2 × 0.293r),以及留出卡片之间看得见的间距。
-    ///
-    /// 各向外扩 2pt 后,卡片吃掉间隙的一半,剩 4pt 作卡片间距,内容四周得到 2pt
-    /// 内缩 —— 配 6pt 圆角(需要 1.76pt)刚好不切字符。字形几乎填满 cell(13pt 下
-    /// ascent + descent = 17.16,cell 高 17),所以这个余量不能再压。
-    public static let paneCardOutset: CGFloat = 2
+    /// 一格用不满的余量也吸收在这里:cols 是向下取整的,所以内容比可用宽度窄
+    /// 最多一个 cell,那点差额落在这个内缩上而不是堆在右边缘。
+    public static let panePadding: CGFloat = 8
 
     /// sidebar 行到 sidebar 边缘。
     public static let rowInset: CGFloat = 8

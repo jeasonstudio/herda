@@ -38,6 +38,16 @@ final class PaneTreeTests: XCTestCase {
         XCTAssertEqual(tree.paneIds, ["p1", "p2", "p3", "p4"])
     }
 
+    func testSplittingWithAPaneAlreadyInTheTreeDoesNothing() {
+        // Adoption can be reached from both the split response and the
+        // pane_created event; inserting twice would show one pane in two cards
+        // with two connections fighting over its PTY.
+        var tree = twoPanes()
+        let before = tree
+        tree.split(paneId: "p1", with: "p2", orientation: .vertical)
+        XCTAssertEqual(tree, before)
+    }
+
     func testSplittingAnUnknownPaneDoesNothing() {
         var tree = twoPanes()
         let before = tree

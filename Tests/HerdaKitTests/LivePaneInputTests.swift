@@ -81,8 +81,10 @@ final class LivePaneInputTests: XCTestCase {
         // is never executed, whichever shell the pane is running.
         try api.sendText(pane, text: "# ")
         let expected = (0 ..< 60).map { String($0 % 10) }
-        let queue = PaneInputQueue { text in try api.sendText(pane, text: text) }
-        for digit in expected { queue.submit(digit) }
+        let queue = PaneInputQueue()
+        for digit in expected {
+            queue.submit(digit) { try api.sendText(pane, text: digit) }
+        }
 
         let drained = expectation(description: "queue drained")
         Task { await queue.drain(); drained.fulfill() }

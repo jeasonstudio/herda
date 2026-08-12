@@ -106,6 +106,10 @@ public struct PaneTree: Equatable, Sendable {
         ratio: Double = 0.5
     ) {
         guard let root, Self.leaves(root).contains(paneId) else { return }
+        // Pane ids are unique, so a second insertion of the same one is a bug
+        // upstream — and it would put the pane on screen twice with two
+        // connections fighting over one PTY.
+        guard !Self.leaves(root).contains(newPaneId) else { return }
         self.root = Self.replacing(paneId, in: root) { existing in
             .split(Split(
                 orientation: orientation,

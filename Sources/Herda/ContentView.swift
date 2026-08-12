@@ -3,7 +3,8 @@ import HerdaKit
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var session = TerminalSession()
+    /// Owned by the app so the menu commands can reach it too.
+    @ObservedObject var session: TerminalSession
 
     var body: some View {
         // 只有终端浮起。sidebar 与窗口底同一层、同一底色,所以它贴着窗口
@@ -21,7 +22,7 @@ struct ContentView: View {
                     session.focusTerminal()
                 },
                 onSelectPane: {
-                    session.focusPane($0)
+                    session.focus(paneId: $0)
                     session.focusTerminal()
                 },
                 onSelectTheme: {
@@ -32,11 +33,6 @@ struct ContentView: View {
             .frame(width: 224)
 
             terminalArea
-                .cardSurface(
-                    fill: session.theme.chrome.panelBackground,
-                    over: session.theme.chrome.windowBackground,
-                    theme: session.theme
-                )
                 .padding(.leading, ChromeMetrics.cardGap)
                 .padding(.top, ChromeMetrics.contentTopInset)
                 .padding(.trailing, ChromeMetrics.cardInset)
@@ -52,31 +48,15 @@ struct ContentView: View {
         .onDisappear { session.shutdown() }
     }
 
+    /// The pane cards, with the status overlay on top.
+    ///
+    /// No window-level card any more: each pane carries its own surface, and
+    /// nesting one inside another doubled the stroke along every shared edge.
     private var terminalArea: some View {
-        GeometryReader { geometry in
-            ZStack {
-                GridViewRepresentable(view: session.view)
-                    .onAppear { session.start(viewportSize: geometry.size) }
-                    .onChange(of: geometry.size) { _, size in session.resize(to: size) }
-                    .onReceive(
-                        NotificationCenter.default.publisher(
-                            for: NSWindow.didBecomeKeyNotification
-                        )
-                    ) { _ in session.reportFocus(gained: true) }
-                    .onReceive(
-                        NotificationCenter.default.publisher(
-                            for: NSWindow.didResignKeyNotification
-                        )
-                    ) { _ in session.reportFocus(gained: false) }
-
-                overlay
-            }
+        ZStack {
+            SplitContainerView(session: session)
+            overlay
         }
-        // 窗口边距由 body 给,这里只让网格退出卡片的圆角:内缩超过
-        // r(1 - 1/√2) 后任何单元格都不会被圆角切到,所以不必对
-        // TerminalGridView 做 layer 裁剪。GeometryReader 拿到的是内缩后
-        // 的尺寸,session.resize 因此仍收到正确的网格大小。
-        .padding(ChromeMetrics.gridInset)
     }
 
     /// What is drawn over the grid while there is nothing to draw in it.
@@ -144,11 +124,4 @@ struct ContentView: View {
         if case .starting(let detail) = session.state { return detail }
         return "starting herdr"
     }
-}
-
-private struct GridViewRepresentable: NSViewRepresentable {
-    let view: TerminalGridView
-
-    func makeNSView(context: Context) -> TerminalGridView { view }
-    func updateNSView(_ nsView: TerminalGridView, context: Context) {}
 }

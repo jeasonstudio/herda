@@ -126,6 +126,17 @@ public struct PaneInfoEnvelope: Decodable, Sendable {
     public let pane: PaneInfo
 }
 
+/// `workspace.create` answers `{"root_pane": {...}, "tab": {...}, ...}`.
+///
+/// Needed because herdr does not bootstrap a session for a client like this one:
+/// `ensure_default_workspace` runs only when `latest_app_client` is present
+/// (`headless.rs:3658`), and every herda connection is an attach connection. With
+/// no app client there is no default workspace and no first pane, so herda has to
+/// ask for one.
+public struct WorkspaceCreateEnvelope: Decodable, Sendable {
+    public let rootPane: PaneInfo
+}
+
 /// Which way `pane.split` divides. Serialized snake_case by herdr
 /// (`api/schema/common.rs:55`), so the raw values are the wire values — not
 /// "vertical"/"horizontal", which is the mistake this spelling exists to avoid.

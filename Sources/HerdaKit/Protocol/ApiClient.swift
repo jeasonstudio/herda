@@ -141,6 +141,20 @@ public final class ApiClient: @unchecked Sendable {
         )
     }
 
+    /// Creates a workspace and returns its first pane.
+    ///
+    /// herda has to call this on an empty session: herdr only creates a default
+    /// workspace when a full app client is connected (`headless.rs:3658`), and
+    /// herda has none.
+    public func createWorkspace() throws -> PaneInfo {
+        try request(
+            WorkspaceCreateEnvelope.self,
+            method: "workspace.create",
+            params: ["focus": true],
+            id: "create-workspace"
+        ).rootPane
+    }
+
     public func splitPane(_ paneId: String, direction: SplitDirection) throws {
         _ = try request(
             method: "pane.split",

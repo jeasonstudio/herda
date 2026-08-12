@@ -35,8 +35,11 @@ final class PaneInputQueueTests: XCTestCase {
 
     func testSendsInSubmissionOrder() async {
         let recorder = Recorder()
-        let queue = PaneInputQueue { recorder.send($0) }
-        for index in 0 ..< 50 { queue.submit("k\(index)") }
+        let queue = PaneInputQueue()
+        for index in 0 ..< 50 {
+            let label = "k\(index)"
+            queue.submit(label) { recorder.send(label) }
+        }
         await queue.drain()
 
         XCTAssertEqual(recorder.order, (0 ..< 50).map { "k\($0)" })
@@ -48,8 +51,11 @@ final class PaneInputQueueTests: XCTestCase {
         // queue in any order, so overlapping sends can reorder keys — and a
         // scrambled character stream leaves almost nothing to debug from.
         let recorder = Recorder()
-        let queue = PaneInputQueue { recorder.send($0) }
-        for index in 0 ..< 30 { queue.submit("k\(index)") }
+        let queue = PaneInputQueue()
+        for index in 0 ..< 30 {
+            let label = "k\(index)"
+            queue.submit(label) { recorder.send(label) }
+        }
         await queue.drain()
 
         XCTAssertEqual(recorder.maxInFlight, 1)
@@ -59,11 +65,14 @@ final class PaneInputQueueTests: XCTestCase {
         // A rejected keypress must not wedge the queue: one invalid_key would
         // otherwise take every later key in the session with it.
         let recorder = Recorder()
-        let queue = PaneInputQueue { label in
-            if label == "k1" { throw ApiClient.Failure.errorResponse("invalid_key") }
-            recorder.send(label)
+        let queue = PaneInputQueue()
+        for index in 0 ..< 4 {
+            let label = "k\(index)"
+            queue.submit(label) {
+                if label == "k1" { throw ApiClient.Failure.errorResponse("invalid_key") }
+                recorder.send(label)
+            }
         }
-        for index in 0 ..< 4 { queue.submit("k\(index)") }
         await queue.drain()
 
         XCTAssertEqual(recorder.order, ["k0", "k2", "k3"])
@@ -73,14 +82,9 @@ final class PaneInputQueueTests: XCTestCase {
         // Logging the payload is the whole diagnostic value: "input failed" with
         // no key name gives nothing to act on.
         let failures = FailureLog()
-        let queue = PaneInputQueue(
-            onFailure: { payload, _ in failures.append(payload) },
-            send: { label in
-                if label == "home" { throw ApiClient.Failure.errorResponse("invalid_key") }
-            }
-        )
-        queue.submit("enter")
-        queue.submit("home")
+        let queue = PaneInputQueue(onFailure: { payload, _ in failures.append(payload) })
+        queue.submit("enter") {}
+        queue.submit("home") { throw ApiClient.Failure.errorResponse("invalid_key") }
         await queue.drain()
 
         XCTAssertEqual(failures.all, ["home"])

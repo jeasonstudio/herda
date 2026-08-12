@@ -17,32 +17,33 @@ import Foundation
 /// sample in 200 took 105ms, which is the request crossing the app's main loop
 /// while it renders; imperceptible for a single key, but worth knowing before
 /// blaming a stall on something else.
+/// Every kind of input goes through here, not just the API calls. Keys travel
+/// over the API and the four unnameable ones over the pane socket, and those are
+/// two independent streams — typing "abc", pressing Home, then typing "d" would
+/// let Home overtake "abc" if each used its own path. One queue is what makes the
+/// order the user typed the order the pane receives.
 public final class PaneInputQueue: @unchecked Sendable {
-    private let send: @Sendable (String) throws -> Void
     private let onFailure: (@Sendable (String, Error) -> Void)?
     /// Serial by construction: one queue with no concurrent attribute.
     private let queue = DispatchQueue(label: "app.herda.pane-input")
 
-    public init(
-        onFailure: (@Sendable (String, Error) -> Void)? = nil,
-        send: @escaping @Sendable (String) throws -> Void
-    ) {
-        self.send = send
+    public init(onFailure: (@Sendable (String, Error) -> Void)? = nil) {
         self.onFailure = onFailure
     }
 
-    /// Enqueues one payload and returns immediately. The caller is the main
-    /// actor handling a key event and must never wait on a socket.
-    public func submit(_ payload: String) {
-        queue.async { [send, onFailure] in
+    /// Enqueues one send and returns immediately. The caller is the main actor
+    /// handling a key event and must never wait on a socket.
+    ///
+    /// - Parameter label: what is being sent, for the failure report. "input
+    ///   failed" without it gives nothing to act on.
+    public func submit(_ label: String, _ work: @escaping @Sendable () throws -> Void) {
+        queue.async { [onFailure] in
             do {
-                try send(payload)
+                try work()
             } catch {
                 // Reported and skipped, never rethrown: one rejected key must
-                // not wedge every later key in the session. The payload goes
-                // with it, because "input failed" without the key name gives
-                // nothing to act on.
-                onFailure?(payload, error)
+                // not wedge every later key in the session.
+                onFailure?(label, error)
             }
         }
     }

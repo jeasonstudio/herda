@@ -119,6 +119,25 @@ public final class PaneConnection {
         )
     }
 
+    /// A page key, on the scroll channel rather than as raw bytes.
+    ///
+    /// `AttachScrollSource::PageKey` carries the original key bytes so the server
+    /// can decide per pane whether the key moves host scrollback or is forwarded
+    /// to the child application (`wire.rs:400`). Sending the bytes as `Input`
+    /// would take that decision away from it.
+    public func scrollPageKey(up: Bool, lines: UInt16, bytes: [UInt8]) {
+        try? connection?.send(
+            WireEncoder.attachScroll(
+                direction: up ? .up : .down,
+                lines: lines,
+                column: nil,
+                row: nil,
+                modifiers: [],
+                pageKeyInput: bytes
+            )
+        )
+    }
+
     public func close() {
         resizeDebounce?.cancel()
         resizeDebounce = nil
