@@ -68,7 +68,25 @@ herdr 本质是 **PTY + 终端模拟 + 会话持久化服务**。第一版把它
 
 **五｜`pane.send_keys` 是 mode-aware 的、按 pane 寻址的输入通道。** `handle_pane_send_keys`（`app/api/panes.rs:1590`）→ `encode_api_keys(runtime, &params.keys)`（`app/api_helpers.rs:37`）→ **`runtime.encode_terminal_key(...)`** —— 用那个终端**自己的**模式状态编码，然后 `runtime.try_send_bytes`。参数是 `{pane_id, keys: [String]}`；`pane.send_input` 是 `{pane_id, text, keys}`，文本与按键一次发。
 
-**这条推翻了第一版否决 per-pane 连接的唯一理由。** 第一版写的是「必须在 Swift 里重写 `src/input/encode.rs` 的 1185 行」—— 不必，herdr 按 pane 替我们编码。application cursor mode、bracketed paste 这些无法从客户端观测的终端状态，全部留在正确的一侧。
+**这条推翻了第一版否决 per-pane 连接的唯一理由。** 第一版写的是「必须在 Swift 里重写 `src/input/encode.rs` 的 1185 行」—— 不必，herdr 按 pane 替我们编码。application cursor mode、bracketed paste 这些无法从客户端观测的终端状态，全部留在正确的一侧（`pane.send_text` 经 `encode_api_text` 也是 bracketed-paste 感知的，`api_helpers.rs:25`）。
+
+**但它的按键词表有洞。** `parse_api_key` → `config::parse_key_combo`（`config/keybinds.rs:1201`），词表是：`space` / `enter`|`return` / `esc`|`escape` / `tab` / `shift+tab`→BackTab / `backspace`|`bs` / `left` `right` `up` `down` / 一批标点名 / 单字符 / `f<N>`；修饰符是 `ctrl`|`control` / `shift` / `alt`|`option`|`meta` / `cmd`|`command`|`super` / `hyper`（`:1151`）。
+
+实测（对未聚焦 pane 发送，成功无输出、失败回 `invalid_key`）：
+
+| 键名 | 结果 |
+|---|---|
+| `f5` `backspace` `shift+tab` `ctrl+a` `alt+b` | 接受 |
+| `home` `end` `pageup` `pagedown` `delete` `insert` | **全部 `unsupported key`**（另试 `page_up` / `pgup` / `del` 同样失败）|
+
+`keybinds.rs` 全文搜这六个名字零命中 —— 不是拼法问题，是词表里没有。而 `KeyMap.specialKey` 把它们全映射了（keyCode 115/119/116/121/117/…）。**六个终端必需的键无法经 `pane.send_keys` 表达。**
+
+解法分两路，都不需要猜终端模式：
+
+- **PageUp / PageDown 走 `AttachScroll`（变体 6）。** 它的 `AttachScrollSource::PageKey { input: Vec<u8> }`（`wire.rs:400`）注释写着「child application owns page keys 时要转发的原始键字节」—— 这是为这件事专门造的路径，由 server 决定是滚 host scrollback 还是转发给子应用。比原始字节更对。
+- **Home / End / Delete / Insert 走该 pane 连接的原始 `Input`。** Delete=`ESC[3~`、Insert=`ESC[2~` 与终端模式无关。Home / End 有 `ESC[H`/`ESC[F`（normal）与 `ESCOH`/`ESCOF`（application cursor）两形，而客户端观测不到模式 —— 发 CSI 形，并在计划里对 vim / less / nano / zsh 行编辑实测。
+
+彻底修好只需 herdr 在 `parse_key_combo` 里加这六个名字（六行 match arm）。本方案不假定能改 herdr。
 
 **六｜pane id 可作为 attach target。** `resolve_terminal_target_id_string`（`headless.rs:1666`）→ `app.resolve_terminal_target`（`app/terminal_targets.rs:33`），herdr 自己的测试 `app/mod.rs:4191` 断言 pane id 可解析。变体编号来自源码自带的 tag 测试（`wire.rs:1060` 起）：`Hello=0` / `Input=1` / `ClipboardImage=2` / `Resize=3` / `Detach=4` / `AttachTerminal=5` / `AttachScroll=6` / `InputEvents=7` / `ObserveTerminal=8` / `ControlTerminal=9`。`ClientLaunchMode` 是 `App=0` / `TerminalAttach=1`（`wire.rs:57`）。
 
@@ -78,7 +96,17 @@ herdr 本质是 **PTY + 终端模拟 + 会话持久化服务**。第一版把它
 
 **一｜绝不在 pane 连接上发 `InputEvents`。** `ServerEvent::ClientInputEvents` **没有**对 `TerminalAttach` 早退（只拒绝 `TerminalObserve`，`headless.rs:2893`），会落到 `handle_client_input_events` → `promote_client_to_foreground(client_id)`，而该函数**没有任何 guard**（`headless.rs:1460`），会把 attach 连接提为 foreground。随后 `sync_foreground_client_state` 令 `effective_size = 那一个 pane 的尺寸`（`:1124`），`resize_shared_runtime_to_effective_size_before_input` 把**所有 pane 重排进单个 pane 的尺寸里**。
 
-这是本方案最容易踩的坑，而且症状是全局的，很难回溯到某一次按键。输入只走 API 的 `pane.send_keys` / `pane.send_text`。
+这是本方案最容易踩的坑，而且症状是全局的（所有 pane 一起变形），很难回溯到某一次按键。
+
+输入因此分三条路，**没有一条用 `InputEvents`**：
+
+| 输入 | 通道 |
+|---|---|
+| 文本（含输入法提交、粘贴） | API `pane.send_text` |
+| 词表内的键与组合键 | API `pane.send_keys` |
+| Home / End / Delete / Insert | pane 连接的原始 `Input`（CSI 字节）|
+| PageUp / PageDown、滚轮 | pane 连接的 `AttachScroll` |
+| 鼠标（开关打开时） | pane 连接的原始 `Input`（SGR 1006）|
 
 **二｜必须用 `ControlTerminal`，不能用 `ObserveTerminal`。** observe 只更新自己的渲染区、**不 resize PTY**（`headless.rs:2997` 起的分支），于是 PTY 尺寸与卡片尺寸永久不一致、内容被裁切。每个 pane 都需要自己的 PTY 尺寸，只有 control 提供。
 
@@ -151,14 +179,19 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 |---|---|---|
 | `Layout/PaneTree.swift` | herda 自己的分割树：二叉，节点带方向 + ratio，叶子是 pane id。操作 `split` / `close` / `setRatio` / `zoom` | 纯值类型：分裂、关闭后父节点塌缩、ratio 边界、嵌套 |
 | `Layout/PaneTreeLayout.swift` | 树 + 容器 point 尺寸 + 间距度量 → `[paneId: CGRect]`，再 → 每 pane 的 `(cols, rows)` | 纯函数：1/2/3/4 pane、多层、余量吸收、最小尺寸下限 |
+| `Terminal/TerminalInput.swift` | 视图输入出口的语义类型：`key` / `text` / `mouse` / `focus`。取代现在直接吐编码字节的 `onPayload` | 纯枚举，随下一行一起测 |
+| `Protocol/HerdrKeyName.swift` | `WireEncoder.Key` + `Modifiers` → herdr 按键名字符串，或「词表没有、走原始字节」的判定。`parse_key_combo` 的逆 | 纯函数：词表内每个键、修饰符组合、以及六个洞键返回 fallback |
+| `Protocol/TerminalKeyBytes.swift` | 六个洞键的 CSI 字节（Home/End/Delete/Insert），以及 PageUp/PageDown 交给 `AttachScroll` 的键字节 | 纯函数，golden bytes |
 | `Runtime/PaneConnection.swift` | 一条 socket、一个 pane、一个 `TerminalGridView`。握手、resize 去抖、帧投递、终端消失处理 | 握手序列与 resize 去抖策略可测；socket 部分不测 |
-| `Runtime/PaneSessionCoordinator.swift` | 调和树的叶子与活连接：新增开、消失关、几何变了 resize | 纯调和逻辑用假连接测 |
+| `Runtime/PaneSessionCoordinator.swift` | 调和树的叶子与活连接：新增开、消失关、几何变了 resize；把 `TerminalInput` 路由到 API 或原始字节 | 纯调和与路由逻辑用假连接测 |
 | `Herda/SplitContainerView.swift` | 原生卡片 + 分隔线 + 拖拽 + 焦点环 | 不测，手动跑 + 离屏渲染验卡片 chrome |
 | `Herda/PaneCommands.swift` | 原生菜单命令 → API 调用 | 不测 |
 
 改动：`TerminalSession`（从整格客户端改成协调者，或直接被 `PaneSessionCoordinator` 取代）、`ApiClient`（`pane.split` / `pane.close` / `pane.focus` / `pane.send_keys` / `pane.send_text`）、`ContentView`（`terminalArea` 换成 `SplitContainerView`）。
 
-`TerminalGridView`、`GlyphCache`、`CellGeometry`、`TerminalFont`、`KeyMap`、`MarkedText`、`ScrollAccumulator`、`WireDecoder` **一行不改**。
+`GlyphCache`、`CellGeometry`、`TerminalFont`、`KeyMap`、`MarkedText`、`ScrollAccumulator`、`WireDecoder` **一行不改** —— 渲染与按键识别都不受影响。
+
+`TerminalGridView` **要改一处**：它现在的出口是 `onPayload: (([UInt8]) -> Void)?`，直接吐已编码的 `InputEvents` 字节（`:87`，产出点在 `:170`、`:182`、`:198`、`:212`、`:231`、`:815`）。那些字节在 pane 连接上会触发硬约束一的连锁反应，所以出口必须换成 `onInput: ((TerminalInput) -> Void)?` —— 由视图报告「按了什么」，由协调者决定「发到哪、怎么编码」。这是纯机械替换：`WireEncoder.key(...)` 变成 `.key(...)`，`WireEncoder.textCommit(text)` 变成 `.text(text)`，判定逻辑（`KeyMap.decide`、输入法、组字）全部不动。
 
 ## 阶段划分（粗）
 
@@ -178,7 +211,7 @@ herdr 拥有**哪些 pane 存在**：PTY 生命周期、会话持久化、agent 
 
 1. **attach 连接会收到哪些 `ServerMessage`。** 已知有帧和 `ServerShutdown`（终端消失时 reason 为 `terminal attach ended: ...`，`headless.rs:4125`）。`Notify` / `SetTitle` / `ReloadSoundConfig` 是否也发、`Handshake` 回什么尺寸，要抓一次真实字节。
 2. **zoom 时非焦点 pane 的 PTY 尺寸怎么处理。** 保持原尺寸最简单，但焦点 pane 铺满后要 resize；退出 zoom 再改回去会让子应用重排两次。可能更好的做法是 zoom 期间不动任何 PTY 尺寸，只改渲染。要实测子应用的观感。
-3. **`pane.send_keys` 的按键名词表。** `parse_api_key` 的接受集合要枚举出来，与 herda 的 `KeyMap` 对齐；不在集合里的键返回 `invalid_key`。
+3. **Home / End 的 CSI 形在真实应用里够不够。** 词表洞已实测确认（见已验证事实五），解法已定，但 `ESC[H`/`ESC[F` 对 application cursor mode 下的 vim / less / nano / zsh 行编辑要逐个试过。若某个应用只认 `ESCOH`，需要记下来并考虑是否值得推动 herdr 补词表。
 4. **输入延迟。** `pane.send_keys` 是 JSON 请求，本地 unix socket 上应远低于一帧，但要实测确认连打不掉字、不乱序（同一 socket 单流，顺序应有保证），并确认不等响应（fire-and-forget）是否安全。
 5. **`herdr pane read` 等 CLI 互操作在 attach 锁定下是否照常。** 预期照常（读路径不 resize），但值得一条实测。
 
