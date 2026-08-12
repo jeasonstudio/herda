@@ -25,9 +25,13 @@ final class CardSurfaceTests: XCTestCase {
         return Int((v * 255).rounded())
     }
 
-    /// 每个主题都必须能把终端卡片从窗口底上分出来 —— 靠面的色差,或者靠
-    /// 描边。`terminal` 主题两个面都是纯黑,只有描边这一条路。
-    func testEveryThemeRendersTheCardDistinctFromTheWindow() throws {
+    /// 描边必须**独立**把卡片从窗口底上勾出来,每个主题都是。
+    ///
+    /// 上一版断言的是「面色差或描边至少成立一条」,那有个盲区:亮色主题靠面
+    /// 色差就过了,于是描边与窗口底撞色(实测明度差 1–6)一直没被发现。描边
+    /// 改成相对 `windowBackground` 派生之后,它在所有主题下都该可辨,断言因此
+    /// 可以收紧成独立的。
+    func testEveryThemeRendersTheCardBorderVisibleAgainstTheWindow() throws {
         for theme in ThemeCatalog.all {
             // 画布 160,卡片 60 居中 → 卡片占 50...110,边距 50。阴影 radius
             // 14 最远扩散到 x≈36,所以 x=5 是不含阴影的纯底色。
@@ -45,12 +49,13 @@ final class CardSurfaceTests: XCTestCase {
             let border = try luminance(rep.colorAt(x: 50, y: 80))
             let face = try luminance(rep.colorAt(x: 80, y: 80))
 
-            let byFace = abs(face - window) >= 3
-            let byBorder = abs(border - window) >= 3
-            XCTAssertTrue(
-                byFace || byBorder,
-                "\(theme.configName): 卡片与窗口底既无面色差(\(abs(face - window)))"
-                    + " 也无描边差(\(abs(border - window)))"
+            XCTAssertGreaterThanOrEqual(
+                abs(border - window), 3,
+                "\(theme.configName): 描边与窗口底同色,卡片边界看不出来"
+            )
+            XCTAssertGreaterThanOrEqual(
+                abs(border - face), 3,
+                "\(theme.configName): 描边与卡片填充同色,卡片边界看不出来"
             )
         }
     }

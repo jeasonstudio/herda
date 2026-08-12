@@ -3,7 +3,7 @@ import XCTest
 @testable import HerdaKit
 
 final class ChromeMetricsTests: XCTestCase {
-    /// `cardTopInset` 不是审美选择。窗口是 `.hiddenTitleBar`,红绿灯浮在
+    /// `contentTopInset` 不是审美选择。窗口是 `.hiddenTitleBar`,红绿灯浮在
     /// 内容顶部,且那条 titlebar 带仍然持有窗口拖动手势 —— 卡片顶边落进
     /// 带内,终端顶部几行的点击就会变成拖窗口。
     ///
@@ -31,7 +31,7 @@ final class ChromeMetricsTests: XCTestCase {
         let clearanceNeeded = content.bounds.height - inContent.minY
 
         XCTAssertGreaterThanOrEqual(
-            ChromeMetrics.cardTopInset,
+            ChromeMetrics.contentTopInset,
             clearanceNeeded,
             "卡片顶边会压在红绿灯上,或落进仍持有拖动手势的 titlebar 带内"
         )
@@ -56,7 +56,7 @@ final class ChromeMetricsTests: XCTestCase {
         let stripHeight = content.bounds.height - window.contentLayoutRect.height
 
         XCTAssertGreaterThanOrEqual(
-            ChromeMetrics.cardTopInset,
+            ChromeMetrics.contentTopInset,
             stripHeight,
             "卡片顶边落进 titlebar 的拖动带,带内的终端行点击会变成拖窗口"
         )

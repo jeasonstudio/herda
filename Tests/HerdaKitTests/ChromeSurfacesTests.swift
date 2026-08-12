@@ -62,21 +62,62 @@ final class ChromeSurfacesTests: XCTestCase {
         abs(a.luminance - b.luminance) >= 3
     }
 
-    /// 双卡片形态要求两张卡片都能从窗口底上分出来。分离可以来自色差,
-    /// 也可以来自描边 —— `terminal` 主题的 `panelBackground` 是纯黑,
-    /// 往黑走不动,只有描边这一条路。所以断言的是两条至少成立一条。
-    func testEveryThemeFloatsBothCardsOffTheWindow() {
+    /// 终端卡片要能从窗口底上分出来。分离可以来自面色差,也可以来自描边
+    /// —— `terminal` 主题的 `panelBackground` 是纯黑,往黑走不动,只有描边
+    /// 这一条路。所以断言的是两条至少成立一条。
+    func testEveryThemeFloatsTheTerminalCardOffTheWindow() {
         for theme in ThemeCatalog.all {
             let chrome = theme.chrome
-            let byColor =
-                separated(chrome.windowBackground, chrome.panelBackground)
-                && separated(chrome.windowBackground, chrome.sidebarBackground)
-            let byBorder =
-                separated(chrome.hairline, chrome.panelBackground)
-                && separated(chrome.hairline, chrome.sidebarBackground)
+            let byColor = separated(chrome.windowBackground, chrome.panelBackground)
+            let byBorder = separated(
+                chrome.hairline(on: chrome.windowBackground),
+                chrome.windowBackground
+            )
             XCTAssertTrue(
                 byColor || byBorder,
-                "\(theme.configName): 卡片既无色差也无描边可辨,会看不见"
+                "\(theme.configName): 卡片既无面色差也无描边可辨,会看不见"
+            )
+        }
+    }
+
+    /// 分隔线必须相对**它所在的那个表面**派生。`hairline` 是从
+    /// `panelBackground` 来的,画在别的表面上会撞色:`windowBackground` 也从
+    /// `panelBackground` 派生、往同一方向走,两者收敛。实测 sidebar 的背景
+    /// 改成 `windowBackground` 之后,catppuccin-latte / tokyo-night-day /
+    /// kanagawa-lotus 三个亮色主题的 `hairline` 与它明度差只有 1–2,sidebar
+    /// 内部的分区线直接消失;另外 4 个亮色主题差 3–6,勉强可见。
+    ///
+    /// 这不只影响 sidebar:终端卡片的描边原先也用 `hairline`,所以亮色主题下
+    /// 卡片边界一直在与窗口底同色。
+    func testHairlineIsVisibleOnWhicheverSurfaceItIsDrawnOn() {
+        for theme in ThemeCatalog.all {
+            let chrome = theme.chrome
+            for (name, surface) in [
+                ("panelBackground", chrome.panelBackground),
+                ("windowBackground", chrome.windowBackground),
+                ("sidebarBackground", chrome.sidebarBackground),
+            ] {
+                XCTAssertTrue(
+                    separated(chrome.hairline(on: surface), surface),
+                    "\(theme.configName): 分隔线在 \(name) 上看不见"
+                )
+            }
+        }
+    }
+
+    /// 卡片描边同时压在两个面的交界上,得跟两边都拉开:与卡片自己的填充
+    /// (`panelBackground`),也与它浮在上面的窗口底。
+    func testCardBorderIsVisibleAgainstBothTheCardAndTheWindow() {
+        for theme in ThemeCatalog.all {
+            let chrome = theme.chrome
+            let border = chrome.hairline(on: chrome.windowBackground)
+            XCTAssertTrue(
+                separated(border, chrome.panelBackground),
+                "\(theme.configName): 描边与卡片填充同色"
+            )
+            XCTAssertTrue(
+                separated(border, chrome.windowBackground),
+                "\(theme.configName): 描边与窗口底同色"
             )
         }
     }
@@ -88,25 +129,10 @@ final class ChromeSurfacesTests: XCTestCase {
     /// 静默移走描边存在的理由。
     func testTerminalThemeSeparatesByBorderAlone() {
         let chrome = ThemeCatalog.terminal.chrome
+        let border = chrome.hairline(on: chrome.windowBackground)
         XCTAssertEqual(chrome.windowBackground, chrome.panelBackground)
-        XCTAssertTrue(separated(chrome.hairline, chrome.panelBackground))
-        XCTAssertTrue(separated(chrome.hairline, chrome.sidebarBackground))
-    }
-
-    /// 亮色主题里 `sidebarBackground` 往暗走、`windowBackground` 也往暗
-    /// 走,比例太小两者就撞:实测 0.05 时 one-light 的两者只差 0.5。
-    func testWindowBackgroundStaysBelowTheSidebarInLightThemes() {
-        for theme in ThemeCatalog.all where !theme.isDark {
-            XCTAssertLessThan(
-                theme.chrome.windowBackground.luminance,
-                theme.chrome.sidebarBackground.luminance,
-                theme.configName
-            )
-            XCTAssertTrue(
-                separated(theme.chrome.windowBackground, theme.chrome.sidebarBackground),
-                "\(theme.configName): 窗口底与侧栏卡片撞色"
-            )
-        }
+        XCTAssertTrue(separated(border, chrome.panelBackground))
+        XCTAssertTrue(separated(border, chrome.windowBackground))
     }
 
     func testStatusColorsFollowHerdrSemantics() {
